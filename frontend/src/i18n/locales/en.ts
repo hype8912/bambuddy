@@ -5112,6 +5112,11 @@ export default {
     sensors: 'Sensors',
     empty: 'No storage locations yet. Create your first shelf or drawer.',
     manage: 'Locations',
+    capacity: 'Capacity',
+    capacityHint: 'Maximum number of spools. 0 = unlimited.',
+    full: 'Full',
+    exceedsCapacity: 'Exceeds capacity',
+    capacityBelowOccupancy: '"{{name}}" holds {{occupied}} spools. Capacity cannot be set below that.',
     createPlaceholder: 'e.g. Shelf A, Drawer 1',
     nameRequired: 'Location name is required',
     created: 'Location created',
@@ -5324,6 +5329,8 @@ export default {
       },
     },
     csv: {
+      capacityWarningsHeading: 'Some locations will exceed their capacity after this import:',
+      capacityWarningItem: '{{name}} would hold {{occupied}} spools (capacity {{capacity}})',
       importButton: 'Import CSV',
       exportButton: 'Export CSV',
       modalTitle: 'Import spools from CSV',
@@ -5400,6 +5407,13 @@ export default {
     // dropdown header. `storageLocationNone` is new (the "no location set"
     // group, mirrors `categoryNone`).
     storageLocationNone: 'No location set',
+    locationFull: '"{{name}}" is full ({{occupied}}/{{capacity}}).',
+    locationFullPartial: '"{{name}}" only has room for {{free}} more ({{occupied}}/{{capacity}}).',
+    locationFullOption: '{{name}} (full)',
+    locationFreeSlots: '{{name}} ({{free}} free of {{capacity}})',
+    locationOverCapacityWarning: 'This location exceeds its capacity ({{occupied}}/{{capacity}}).',
+    capacityWarningsTitle: 'Locations over capacity: {{details}}',
+    capacityWarningItem: '{{name}} ({{occupied}}/{{capacity}} spools)',
     lowStockThresholdOverride: 'Low-stock threshold (this spool)',
     lowStockThresholdOverrideHelp: 'Leave blank to use the global threshold ({{global}}%).',
     // Internal material / article number (#2870)

@@ -6,6 +6,7 @@ import { api, type StorageLocation } from '../api/client';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
+import { capacityErrorMessage, formatOccupancy, isLocationFull, isOverCapacity } from '../utils/locationCapacity';
 import { inventoryLocationsQueryKey, invalidateInventoryLocations } from '../utils/inventoryQueries';
 
 interface LocationsModalProps {
@@ -26,6 +27,7 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<StorageLocation | null>(null);
   const [name, setName] = useState('');
+  const [capacity, setCapacity] = useState('0');
   const [deleteTarget, setDeleteTarget] = useState<StorageLocation | null>(null);
 
   const { data: locations = [], isLoading } = useQuery({
@@ -53,14 +55,19 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
     queryClient.invalidateQueries({ queryKey: ['locationHaSensorReadings'] });
   };
 
+  const parsedCapacity = (() => {
+    const n = Math.floor(Number(capacity));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  })();
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const trimmed = name.trim();
       if (!trimmed) throw new Error(t('locations.nameRequired'));
       if (editing) {
-        return api.updateLocation(editing.id, { name: trimmed });
+        return api.updateLocation(editing.id, { name: trimmed, capacity: parsedCapacity });
       }
-      return api.createLocation({ name: trimmed });
+      return api.createLocation({ name: trimmed, capacity: parsedCapacity });
     },
     onSuccess: (saved) => {
       showToast(t(editing ? 'locations.updated' : 'locations.created'), 'success');
@@ -80,9 +87,10 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
       setEditorOpen(false);
       setEditing(null);
       setName('');
+      setCapacity('0');
     },
     onError: (err: Error) => {
-      showToast(err.message || t('locations.saveFailed'), 'error');
+      showToast(capacityErrorMessage(t, err) || err.message || t('locations.saveFailed'), 'error');
     },
   });
 
@@ -101,6 +109,7 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
   const openCreate = () => {
     setEditing(null);
     setName('');
+    setCapacity('0');
     setEditorOpen(true);
   };
 
@@ -108,6 +117,7 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
     if (open && startCreating) {
       setEditing(null);
       setName('');
+      setCapacity('0');
       setEditorOpen(true);
     }
   }, [open, startCreating]);
@@ -115,6 +125,7 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
   const openEdit = (location: StorageLocation) => {
     setEditing(location);
     setName(location.name);
+    setCapacity(String(location.capacity ?? 0));
     setEditorOpen(true);
   };
 
@@ -127,6 +138,7 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
     setEditorOpen(false);
     setEditing(null);
     setName('');
+    setCapacity('0');
   }, [saveMutation.isPending, startCreating, onClose]);
 
   // Esc closes the inner editor first; if it's closed, Esc closes the outer
@@ -167,12 +179,28 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
         id="location-name"
         type="text"
         maxLength={255}
-        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green mb-4"
+        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green mb-3"
         placeholder={t('locations.createPlaceholder')}
         value={name}
         onChange={(e) => setName(e.target.value)}
         autoFocus
       />
+      <label className="block text-sm font-medium text-bambu-gray mb-1" htmlFor="location-capacity">
+        {t('locations.capacity')}
+      </label>
+      <input
+        id="location-capacity"
+        type="number"
+        min={0}
+        step={1}
+        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
+        value={capacity}
+        onChange={(e) => setCapacity(e.target.value)}
+        aria-describedby="location-capacity-hint"
+      />
+      <p id="location-capacity-hint" className="text-xs text-bambu-gray mt-1 mb-4">
+        {t('locations.capacityHint')}
+      </p>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={closeEditor}>
           {t('common.cancel')}
@@ -257,7 +285,7 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
                 <tr className="border-b border-bambu-dark-tertiary text-left text-bambu-gray">
                   <th className="px-4 py-3 font-medium">{t('locations.name')}</th>
                   <th className="px-2 py-3 font-medium text-right w-24">{t('locations.sensors')}</th>
-                  <th className="pl-[28px] pr-4 py-3 font-medium text-right w-28">{t('locations.spools')}</th>
+                  <th className="pl-[28px] pr-4 py-3 font-medium text-right w-44">{t('locations.spools')}</th>
                   <th className="px-4 py-3 font-medium text-right w-32">{t('common.actions')}</th>
                 </tr>
               </thead>
@@ -275,7 +303,18 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
                   >
                     <td className="px-4 py-3 text-white font-medium truncate">{loc.name}</td>
                     <td className="px-2 py-3 text-right text-bambu-gray">{sensorCountByLocation[loc.id] ?? 0}</td>
-                    <td className="pl-[28px] pr-4 py-3 text-right text-bambu-gray">{loc.spool_count}</td>
+                    <td className="pl-[28px] pr-4 py-3 text-right text-bambu-gray">
+                      <span className={isOverCapacity(loc) ? 'text-yellow-500' : undefined}>{formatOccupancy(loc)}</span>
+                      {isOverCapacity(loc) ? (
+                        <span className="ml-1.5 px-1.5 py-0.5 text-[10px] rounded bg-yellow-500/15 text-yellow-500 whitespace-nowrap">
+                          {t('locations.exceedsCapacity')}
+                        </span>
+                      ) : isLocationFull(loc) ? (
+                        <span className="ml-1.5 px-1.5 py-0.5 text-[10px] rounded bg-bambu-green/15 text-bambu-green whitespace-nowrap">
+                          {t('locations.full')}
+                        </span>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         <button

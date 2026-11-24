@@ -221,7 +221,12 @@ export interface AdditionalSectionProps extends SectionProps {
   // Global low-stock threshold (%); shown as placeholder on the per-spool
   // override input so users see what they're overriding. #729
   globalLowStockThreshold: number;
-  availableLocations?: { id: number; name: string }[];
+  availableLocations?: { id: number; name: string; capacity?: number; spool_count?: number }[];
+  // The spool's saved location. It stays selectable even when full (the spool
+  // already holds a slot there), and drives the over-capacity warning.
+  currentLocationId?: number | null;
+  // Archived spools take no slot, so no location is off-limits for them.
+  ignoreLocationCapacity?: boolean;
   onCreateLocation?: (name: string) => Promise<{ id: number; name: string } | null>;
   // When true the "Last dried" field is shown. Edit mode only: a new spool
   // has no drying record to correct (#2863).

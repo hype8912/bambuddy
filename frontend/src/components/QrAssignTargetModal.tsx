@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { X, Loader2, QrCode, Cpu, MapPin, ArrowLeft } from 'lucide-react';
 import { api, ApiError, type AMSTray } from '../api/client';
+import { capacityErrorMessage } from '../utils/locationCapacity';
 import { Button } from './Button';
 import { MaterialMismatchConfirm } from './MaterialMismatchConfirm';
 import { QrSpoolScanner } from './QrSpoolScanner';
@@ -231,7 +232,7 @@ export function QrAssignTargetModal({ isOpen, onClose, spoolmanMode = false }: Q
       // Said in the dialog, which stays open: a toast sits under its backdrop,
       // the SpoolBuddy kiosk shows none, and the scanner doesn't send a label
       // again while it stays in view.
-      setError(`${t('inventory.qrAssign.assignFailed', { location: targetLocationLabel(tg) })}: ${error.message}`);
+      setError(`${t('inventory.qrAssign.assignFailed', { location: targetLocationLabel(tg) })}: ${capacityErrorMessage(t, error) ?? error.message}`);
     },
   });
 

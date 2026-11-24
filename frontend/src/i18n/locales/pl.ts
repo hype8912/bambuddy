@@ -5112,6 +5112,11 @@ export default {
     sensors: 'Czujniki',
     empty: 'Brak miejsc przechowywania. Utwórz pierwszą półkę lub szufladę.',
     manage: 'Lokalizacje',
+    capacity: 'Pojemność',
+    capacityHint: 'Maksymalna liczba szpul. 0 = bez limitu.',
+    full: 'Pełna',
+    exceedsCapacity: 'Przekroczona pojemność',
+    capacityBelowOccupancy: '„{{name}}” zawiera {{occupied}} szpul. Pojemność nie może być mniejsza.',
     createPlaceholder: 'np. Półka A, Szuflada 1',
     nameRequired: 'Nazwa lokalizacji jest wymagana',
     created: 'Utworzono lokalizację',
@@ -5324,6 +5329,8 @@ export default {
       },
     },
     csv: {
+      capacityWarningsHeading: 'Niektóre lokalizacje przekroczą pojemność po tym imporcie:',
+      capacityWarningItem: '{{name}} zawierałaby {{occupied}} szpul (pojemność {{capacity}})',
       importButton: 'Importuj CSV',
       exportButton: 'Eksportuj CSV',
       modalTitle: 'Importuj szpule z CSV',
@@ -5400,6 +5407,13 @@ export default {
     // dropdown header. `storageLocationNone` is new (the "no location set"
     // group, mirrors `categoryNone`).
     storageLocationNone: 'Brak lokalizacji',
+    locationFull: '„{{name}}” jest pełna ({{occupied}}/{{capacity}}).',
+    locationFullPartial: 'W „{{name}}” jest miejsce tylko na {{free}} więcej ({{occupied}}/{{capacity}}).',
+    locationFullOption: '{{name}} (pełna)',
+    locationFreeSlots: '{{name}} ({{free}} wolnych z {{capacity}})',
+    locationOverCapacityWarning: 'Ta lokalizacja przekracza swoją pojemność ({{occupied}}/{{capacity}}).',
+    capacityWarningsTitle: 'Lokalizacje powyżej pojemności: {{details}}',
+    capacityWarningItem: '{{name}} ({{occupied}}/{{capacity}} szpul)',
     lowStockThresholdOverride: 'Próg niskiego stanu (ta szpula)',
     lowStockThresholdOverrideHelp: 'Pozostaw puste, aby użyć progu globalnego ({{global}}%).',
     // Internal material / article number (#2870)

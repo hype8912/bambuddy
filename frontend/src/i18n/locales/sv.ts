@@ -5142,6 +5142,11 @@ errors: {
     sensors: 'Sensorer',
     empty: 'Inga lagringsplatser än. Skapa din första hylla eller låda.',
     manage: 'Platser',
+    capacity: 'Kapacitet',
+    capacityHint: 'Högsta antal spolar. 0 = obegränsat.',
+    full: 'Fullt',
+    exceedsCapacity: 'Kapaciteten överskriden',
+    capacityBelowOccupancy: '"{{name}}" innehåller {{occupied}} spolar. Kapaciteten kan inte vara lägre.',
     createPlaceholder: 't.ex. Hylla A, Låda 1',
     nameRequired: 'Platsnamn krävs',
     created: 'Plats skapad',
@@ -5354,6 +5359,8 @@ errors: {
       },
     },
     csv: {
+      capacityWarningsHeading: 'Vissa platser överskrider sin kapacitet efter den här importen:',
+      capacityWarningItem: '{{name}} skulle innehålla {{occupied}} spolar (kapacitet {{capacity}})',
       importButton: 'Importera CSV',
       exportButton: 'Exportera CSV',
       modalTitle: 'Importera rullar från CSV',
@@ -5430,6 +5437,13 @@ errors: {
     // dropdown header. `storageLocationNone` is new (the "no location set"
     // group, mirrors `categoryNone`).
     storageLocationNone: 'Ingen lagringsplats inställd',
+    locationFull: '"{{name}}" är full ({{occupied}}/{{capacity}}).',
+    locationFullPartial: '"{{name}}" har bara plats för {{free}} till ({{occupied}}/{{capacity}}).',
+    locationFullOption: '{{name}} (fullt)',
+    locationFreeSlots: '{{name}} ({{free}} lediga av {{capacity}})',
+    locationOverCapacityWarning: 'Den här platsen överskrider sin kapacitet ({{occupied}}/{{capacity}}).',
+    capacityWarningsTitle: 'Platser över sin kapacitet: {{details}}',
+    capacityWarningItem: '{{name}} ({{occupied}}/{{capacity}} spolar)',
     lowStockThresholdOverride: 'Lågt lagertröskelvärde (denna rulle)',
     lowStockThresholdOverrideHelp: 'Lämna tomt för att använda det globala tröskelvärdet ({{global}}%).',
     // Internal material / article number (#2870)

@@ -11,7 +11,8 @@ import {
 } from 'lucide-react';
 import { ForecastPanel } from '../components/ForecastPanel';
 import { api, spoolbuddyApi, ApiError } from '../api/client';
-import type { InventorySpool, SpoolCatalogEntry, LocationHASensorReading } from '../api/client';
+import type { InventorySpool, SpoolCatalogEntry, LocationHASensorReading, CapacityWarning } from '../api/client';
+import { capacityErrorMessage, capacityWarningsSummary, formatOccupancy, isOverCapacity } from '../utils/locationCapacity';
 import { Button } from '../components/Button';
 import { FilamentSwatch } from '../components/FilamentSwatch';
 import { describeHASensorReading, iconForHASensor } from '../utils/haSensorDisplay';
@@ -952,7 +953,10 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
       showToast(t('inventory.spoolRestored'), 'success');
     },
     onError: (error: Error) => {
-      if (error instanceof ApiError && error.status === 404) {
+      const capacityMessage = capacityErrorMessage(t, error);
+      if (capacityMessage) {
+        showToast(capacityMessage, 'error');
+      } else if (error instanceof ApiError && error.status === 404) {
         showToast(t('inventory.restoreSpoolNotFound'), 'error');
       } else if (error instanceof ApiError && error.status === 503) {
         showToast(t('inventory.spoolmanUnreachable'), 'error');
@@ -1015,6 +1019,24 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   // Bulk action mutations (#1795). Each invalidates the same query keys as
   // the per-spool equivalents so the table refreshes with the new state.
+  // For the bulk-edit location picker: selected spools that would take a slot
+  // (non-archived), and how many of them already sit in each location.
+  const { selectedActiveByLocation, selectedActiveCount } = useMemo(() => {
+    const byLocation: Record<number, number> = {};
+    let count = 0;
+    for (const spool of spools ?? []) {
+      if (!selectedIds.has(spool.id) || spool.archived_at) continue;
+      count += 1;
+      const locId =
+        spool.location_id ??
+        storageLocations.find(
+          (l) => l.name.trim().toLowerCase() === (spool.storage_location ?? '').trim().toLowerCase(),
+        )?.id;
+      if (locId) byLocation[locId] = (byLocation[locId] ?? 0) + 1;
+    }
+    return { selectedActiveByLocation: byLocation, selectedActiveCount: count };
+  }, [spools, selectedIds, storageLocations]);
+
   const bulkUpdateMutation = useMutation({
     mutationFn: async ({ ids, update }: { ids: number[]; update: Partial<Omit<InventorySpool, 'id' | 'archived_at' | 'created_at' | 'updated_at' | 'k_profiles'>> }): Promise<{ updated: number; not_found?: number[]; errors?: Array<{ id: number; status: number; detail: string }> }> => {
       if (spoolmanMode) return api.bulkUpdateSpoolmanInventorySpools(ids, update);
@@ -1036,7 +1058,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
       clearSelection();
     },
     onError: (err: Error) => {
-      showToast(err.message || t('inventory.bulk.updateFailed'), 'error');
+      showToast(capacityErrorMessage(t, err) || err.message || t('inventory.bulk.updateFailed'), 'error');
     },
   });
 
@@ -1092,7 +1114,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
   });
 
   const bulkRestoreMutation = useMutation({
-    mutationFn: async (ids: number[]): Promise<{ restored: number; already_active?: number[]; not_found?: number[]; errors?: Array<{ id: number; status: number; detail: string }> }> => {
+    mutationFn: async (ids: number[]): Promise<{ restored: number; already_active?: number[]; not_found?: number[]; errors?: Array<{ id: number; status: number; detail: unknown }>; capacity_warnings?: CapacityWarning[] }> => {
       if (spoolmanMode) return api.bulkRestoreSpoolmanInventorySpools(ids);
       return api.bulkRestoreSpools(ids);
     },
@@ -1107,6 +1129,12 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
         showToast(t('inventory.bulk.restorePartial', { ok: data.restored, failed }), 'warning');
       } else {
         showToast(t('inventory.bulk.restoreSuccess', { count: data.restored }), 'success');
+      }
+      if (data.capacity_warnings?.length) {
+        showToast(
+          t('inventory.capacityWarningsTitle', { details: capacityWarningsSummary(t, data.capacity_warnings) }),
+          'warning',
+        );
       }
       setBulkConfirmAction(null);
       clearSelection();
@@ -2163,7 +2191,11 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
           >
             <option value="">{t('inventory.storageLocation')}</option>
             {storageLocations.map((loc) => (
-              <option key={loc.id} value={String(loc.id)}>{loc.name}</option>
+              <option key={loc.id} value={String(loc.id)}>
+                {loc.capacity > 0
+                  ? `${loc.name} (${formatOccupancy(loc)})${isOverCapacity(loc) ? ' ⚠' : ''}`
+                  : loc.name}
+              </option>
             ))}
             {hasUnsetStorageLocation && (
               <option value="__none__">{t('inventory.storageLocationNone')}</option>
@@ -2668,7 +2700,9 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
         isOpen={bulkEditOpen}
         selectedCount={selectedIds.size}
         isPending={bulkUpdateMutation.isPending}
-        availableLocations={storageLocations.map((l) => ({ id: l.id, name: l.name }))}
+        availableLocations={storageLocations}
+        selectedActiveByLocation={selectedActiveByLocation}
+        selectedActiveCount={selectedActiveCount}
         availableMaterials={dedupeAndSort((spools ?? []).map((s) => s.material))}
         availableSubtypes={dedupeAndSort((spools ?? []).map((s) => s.subtype))}
         availableBrands={dedupeAndSort((spools ?? []).map((s) => s.brand))}
@@ -2724,7 +2758,8 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
           onClose={() => setCsvImportOpen(false)}
           onImported={(created) => {
             setCsvImportOpen(false);
-            queryClient.invalidateQueries({ queryKey: spoolsQueryKey });
+            // Imported spools can land in locations, so refresh the occupancy counts too.
+            refreshSpoolQueries();
             showToast(t('inventory.csv.importSuccess', '{{count}} spools imported', { count: created }), 'success');
           }}
         />

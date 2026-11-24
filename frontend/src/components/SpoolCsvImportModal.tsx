@@ -4,6 +4,8 @@ import { Upload, X, FileText, Loader2, CheckCircle, XCircle, MinusCircle, Wand2,
 import { api, type CsvImportPreview, type CsvImportRow } from '../api/client';
 import { getSwatchStyle } from '../utils/colors';
 import { Button } from './Button';
+import { useToast } from '../contexts/ToastContext';
+import { capacityWarningsSummary } from '../utils/locationCapacity';
 
 interface SpoolCsvImportModalProps {
   onClose: () => void;
@@ -18,6 +20,7 @@ interface SpoolCsvImportModalProps {
  */
 export function SpoolCsvImportModal({ onClose, onImported }: SpoolCsvImportModalProps) {
   const { t } = useTranslation();
+  const { showToast } = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [preview, setPreview] = useState<CsvImportPreview | null>(null);
@@ -59,6 +62,12 @@ export function SpoolCsvImportModal({ onClose, onImported }: SpoolCsvImportModal
     setError(null);
     try {
       const result = await api.importSpoolsCsv(file);
+      if (result.capacity_warnings?.length) {
+        showToast(
+          t('inventory.capacityWarningsTitle', { details: capacityWarningsSummary(t, result.capacity_warnings) }),
+          'warning',
+        );
+      }
       onImported(result.created);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('inventory.csv.importError', 'Import failed'));
@@ -150,6 +159,24 @@ export function SpoolCsvImportModal({ onClose, onImported }: SpoolCsvImportModal
                 <div className="p-3 bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-300 dark:border-yellow-500/30 rounded-lg space-y-1">
                   {preview.warnings.map((w, i) => (
                     <p key={i} className="text-xs text-yellow-700 dark:text-yellow-300">{w}</p>
+                  ))}
+                </div>
+              )}
+
+              {preview.capacity_warnings && preview.capacity_warnings.length > 0 && (
+                <div className="p-3 bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-300 dark:border-yellow-500/30 rounded-lg space-y-1">
+                  <p className="text-xs font-medium text-yellow-700 dark:text-yellow-300">
+                    {t('inventory.csv.capacityWarningsHeading')}
+                  </p>
+                  {preview.capacity_warnings.map((w) => (
+                    <p key={w.location_name} className="text-xs text-yellow-700 dark:text-yellow-300">
+                      {t('inventory.csv.capacityWarningItem', {
+                        name: w.location_name,
+                        // Preview counts are pre-import; the message is about the total after it.
+                        occupied: w.occupied + w.incoming,
+                        capacity: w.capacity,
+                      })}
+                    </p>
                   ))}
                 </div>
               )}

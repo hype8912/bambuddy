@@ -1926,11 +1926,23 @@ export interface SpoolCatalogEntry {
   is_default: boolean;
 }
 
+/** A location that ends up over its capacity after a lenient write (CSV import, bulk restore). */
+export interface CapacityWarning {
+  location_id: number;
+  location_name: string;
+  capacity: number;
+  occupied: number;
+  over_by: number;
+  incoming: number;
+}
+
 export interface StorageLocation {
   id: number;
   name: string;
   identifier: string | null;
   spool_count: number;
+  /** Max non-archived spools this location holds; 0 = unlimited. */
+  capacity: number;
   created_at: string;
   updated_at: string;
 }
@@ -4223,6 +4235,7 @@ export interface CsvImportPreview {
   skipped_count: number;
   rows: CsvImportRow[];
   warnings: string[];
+  capacity_warnings?: CapacityWarning[];
 }
 
 /** Summary returned after a real (non-dry-run) import. */
@@ -4231,6 +4244,7 @@ export interface CsvImportResult {
   skipped: number;
   errors: number;
   error_rows: CsvImportRow[];
+  capacity_warnings?: CapacityWarning[];
 }
 
 export interface SpoolUsageRecord {
@@ -7377,7 +7391,7 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
   bulkRestoreSpools: (ids: number[]) =>
-    request<{ restored: number; already_active: number[]; not_found: number[] }>(`/inventory/spools/bulk-restore`, {
+    request<{ restored: number; already_active: number[]; not_found: number[]; capacity_warnings?: CapacityWarning[] }>(`/inventory/spools/bulk-restore`, {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
@@ -7500,9 +7514,9 @@ export const api = {
   },
   getLocations: () =>
     request<StorageLocation[]>('/inventory/locations'),
-  createLocation: (data: { name: string; identifier?: string | null }) =>
+  createLocation: (data: { name: string; identifier?: string | null; capacity?: number }) =>
     request<StorageLocation>('/inventory/locations', { method: 'POST', body: JSON.stringify(data) }),
-  updateLocation: (id: number, data: { name?: string; identifier?: string | null }) =>
+  updateLocation: (id: number, data: { name?: string; identifier?: string | null; capacity?: number }) =>
     request<StorageLocation>(`/inventory/locations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteLocation: (id: number) =>
     request<{ status: string }>(`/inventory/locations/${id}`, { method: 'DELETE' }),
@@ -7658,7 +7672,7 @@ export const api = {
       body: JSON.stringify({ ids }),
     }),
   bulkRestoreSpoolmanInventorySpools: (ids: number[]) =>
-    request<{ restored: number; errors: Array<{ id: number; status: number; detail: string }> }>(`/spoolman/inventory/spools/bulk-restore`, {
+    request<{ restored: number; errors: Array<{ id: number; status: number; detail: unknown }>; capacity_warnings?: CapacityWarning[] }>(`/spoolman/inventory/spools/bulk-restore`, {
       method: 'POST',
       body: JSON.stringify({ ids }),
     }),
