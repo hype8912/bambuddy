@@ -78,9 +78,9 @@ from backend.app.services.location_service import (
     DUPLICATE_LOCATION_NAME,
     assign_location_name,
     count_internal_spools_at_location,
+    count_spoolman_spools_by_location_key,
     get_location_by_id,
     get_location_by_name,
-    location_name_key,
     prepare_internal_spool_payload,
     rename_location as rename_location_record,
 )
@@ -688,16 +688,7 @@ async def _spool_counts_for_locations(
                 # codepath store as the case-insensitive lookup key. Plain
                 # str.lower() drifts for non-ASCII (Turkish ı/İ, German ß)
                 # and caused mismatched delete-block counts in Spoolman mode.
-                by_key: dict[str, int] = {}
-                for spool in spools:
-                    raw = spool.get("location")
-                    if not raw or not isinstance(raw, str) or not raw.strip():
-                        continue
-                    try:
-                        key = location_name_key(raw)
-                    except ValueError:
-                        continue
-                    by_key[key] = by_key.get(key, 0) + 1
+                by_key = count_spoolman_spools_by_location_key(spools)
                 return {loc.id: by_key.get(loc.name_key, 0) for loc in locations}
 
     counts: dict[int, int] = {}

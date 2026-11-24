@@ -5,9 +5,12 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import httpx
+from fastapi import HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -210,6 +213,160 @@ async def count_internal_spools_at_location(db: AsyncSession, location_id: int) 
         )
     )
     return int(result.scalar() or 0)
+
+
+class LocationFullError(Exception):
+    """A write would put more spools into a location than its capacity allows.
+
+    Deliberately NOT a ``ValueError``: the spool routes map ``ValueError`` to
+    400, whereas this becomes a 409 through an app-level handler (see main.py).
+    """
+
+    def __init__(self, location: Location, occupied: int, incoming: int):
+        self.location_id = location.id
+        self.location_name = location.name
+        self.capacity = location.capacity
+        self.occupied = occupied
+        self.incoming = incoming
+        self.free = max(location.capacity - occupied, 0)
+        wanted = f"{incoming} spool{'s' if incoming != 1 else ''}"
+        if self.free == 0:
+            message = f"Location '{location.name}' is full ({occupied}/{location.capacity}); cannot add {wanted}"
+        else:
+            message = (
+                f"Location '{location.name}' only has room for {self.free} more "
+                f"({occupied}/{location.capacity}); cannot add {wanted}"
+            )
+        super().__init__(message)
+
+    def to_detail(self) -> dict:
+        return {
+            "code": "location_full",
+            "message": str(self),
+            "location_id": self.location_id,
+            "location_name": self.location_name,
+            "capacity": self.capacity,
+            "occupied": self.occupied,
+            "incoming": self.incoming,
+            "free": self.free,
+        }
+
+
+class CapacityWarning(BaseModel):
+    """A location that is (or, with ``incoming``, would be) over its capacity.
+
+    Defined here rather than in schemas/location.py because that module imports
+    this one. ``incoming`` is only set by the CSV preview.
+    """
+
+    location_id: int
+    location_name: str
+    capacity: int
+    occupied: int
+    over_by: int
+    incoming: int = 0
+
+
+async def ensure_location_has_room(db: AsyncSession, location_id: int | None, *, incoming: int) -> None:
+    """Raise :class:`LocationFullError` if ``incoming`` more spools don't fit.
+
+    Callers pass only the spools that would consume a NEW slot (see the core
+    rule in docs/plans/storage-location-capacity.md). Capacity 0 is unlimited.
+    """
+    if location_id is None or incoming <= 0:
+        return
+    location = await get_location_by_id(db, location_id)
+    if location is None or location.capacity <= 0:
+        return
+    occupied = await count_internal_spools_at_location(db, location_id)
+    if occupied + incoming > location.capacity:
+        raise LocationFullError(location, occupied, incoming)
+
+
+async def internal_capacity_warnings(db: AsyncSession, location_ids: Iterable[int]) -> list[CapacityWarning]:
+    """Locations among ``location_ids`` that currently hold more than their capacity."""
+    ids = {i for i in location_ids if i is not None}
+    if not ids:
+        return []
+    locations = (await db.execute(select(Location).where(Location.id.in_(ids), Location.capacity > 0))).scalars().all()
+    if not locations:
+        return []
+    count_rows = await db.execute(
+        select(Spool.location_id, func.count())
+        .where(Spool.location_id.in_([loc.id for loc in locations]), Spool.archived_at.is_(None))
+        .group_by(Spool.location_id)
+    )
+    counts = {row[0]: int(row[1]) for row in count_rows.all()}
+    warnings = []
+    for loc in sorted(locations, key=lambda x: x.name_key):
+        occupied = counts.get(loc.id, 0)
+        if occupied > loc.capacity:
+            warnings.append(
+                CapacityWarning(
+                    location_id=loc.id,
+                    location_name=loc.name,
+                    capacity=loc.capacity,
+                    occupied=occupied,
+                    over_by=occupied - loc.capacity,
+                )
+            )
+    return warnings
+
+
+def count_spoolman_spools_by_location_key(spools: Iterable[dict]) -> dict[str, int]:
+    """Count Spoolman spool dicts per ``location_name_key`` of their ``location``.
+
+    Uses the canonical key helper so the result matches ``Location.name_key``;
+    plain ``str.lower()`` drifts for non-ASCII names.
+    """
+    by_key: dict[str, int] = {}
+    for spool in spools:
+        raw = spool.get("location")
+        if not raw or not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            key = location_name_key(raw)
+        except ValueError:
+            continue
+        by_key[key] = by_key.get(key, 0) + 1
+    return by_key
+
+
+async def ensure_spoolman_location_has_room(
+    db: AsyncSession,
+    client,
+    location_name: str | None,
+    *,
+    incoming: int,
+    spools: list[dict] | None = None,
+) -> None:
+    """Spoolman-mode counterpart of :func:`ensure_location_has_room`.
+
+    Capacity lives in the local ``locations`` table; occupancy is counted from
+    Spoolman's non-archived spools. Unknown or unlimited locations return
+    without contacting Spoolman. Pass ``spools`` (non-archived) to reuse one
+    fetch across a bulk request. Spoolman unreachable -> 503 (fail closed).
+    """
+    if not location_name or not location_name.strip() or incoming <= 0:
+        return
+    location = await get_location_by_name(db, location_name)
+    if location is None or location.capacity <= 0:
+        return
+    if spools is None:
+        if client is None:
+            raise HTTPException(status_code=503, detail="Spoolman is unavailable")
+        from backend.app.services.spoolman import SpoolmanClientError, SpoolmanUnavailableError
+
+        # Narrow on purpose (see sync_locations_from_spoolman): a transport
+        # failure fails closed with 503, a programming bug surfaces as a 500.
+        try:
+            spools = await client.get_all_spools(allow_archived=False)
+        except (SpoolmanUnavailableError, SpoolmanClientError, httpx.HTTPError) as exc:
+            logger.warning("Failed to fetch Spoolman spools for capacity check: %s", exc)
+            raise HTTPException(status_code=503, detail="Spoolman is unavailable") from exc
+    occupied = count_spoolman_spools_by_location_key(spools).get(location.name_key, 0)
+    if occupied + incoming > location.capacity:
+        raise LocationFullError(location, occupied, incoming)
 
 
 async def enrich_spool_dicts_with_location_id(db: AsyncSession, spools: list[dict]) -> None:
