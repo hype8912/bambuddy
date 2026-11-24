@@ -5077,6 +5077,7 @@ export default {
     manage: '保管場所',
     capacity: '容量',
     capacityHint: 'スプールの最大数。0 = 無制限。',
+    capacityInvalid: '0〜{{max}}の整数を入力してください（0 = 無制限）。',
     full: '満杯',
     exceedsCapacity: '容量超過',
     capacityBelowOccupancy: '「{{name}}」には{{occupied}}個のスプールがあります。容量をそれより小さくすることはできません。',

@@ -5144,6 +5144,7 @@ errors: {
     manage: 'Platser',
     capacity: 'Kapacitet',
     capacityHint: 'Högsta antal spolar. 0 = obegränsat.',
+    capacityInvalid: 'Ange ett heltal från 0 till {{max}} (0 = obegränsat).',
     full: 'Fullt',
     exceedsCapacity: 'Kapaciteten överskriden',
     capacityBelowOccupancy: '"{{name}}" innehåller {{occupied}} spolar. Kapaciteten kan inte vara lägre.',

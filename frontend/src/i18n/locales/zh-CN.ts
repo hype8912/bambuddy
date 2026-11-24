@@ -5064,6 +5064,7 @@ export default {
     manage: '位置',
     capacity: '容量',
     capacityHint: '最多可存放的料盘数量。0 = 不限制。',
+    capacityInvalid: '请输入 0 到 {{max}} 之间的整数（0 = 不限制）。',
     full: '已满',
     exceedsCapacity: '超出容量',
     capacityBelowOccupancy: '“{{name}}”现有 {{occupied}} 个料盘，容量不能低于该数量。',

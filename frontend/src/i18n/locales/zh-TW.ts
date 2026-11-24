@@ -5064,6 +5064,7 @@ export default {
     manage: '位置',
     capacity: '容量',
     capacityHint: '最多可存放的線軸數量。0 = 不限制。',
+    capacityInvalid: '請輸入 0 到 {{max}} 之間的整數（0 = 不限制）。',
     full: '已滿',
     exceedsCapacity: '超出容量',
     capacityBelowOccupancy: '「{{name}}」目前有 {{occupied}} 個線軸，容量不能低於該數量。',

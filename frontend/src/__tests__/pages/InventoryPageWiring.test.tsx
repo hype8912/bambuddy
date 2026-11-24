@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { render } from '../utils';
 import InventoryPageRouter from '../../pages/InventoryPage';
-import { api, spoolbuddyApi } from '../../api/client';
+import { api, spoolbuddyApi, ApiError } from '../../api/client';
 
 vi.mock('../../api/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api/client')>();
@@ -300,6 +300,66 @@ describe.each([
     expect([...ids].sort()).toEqual([1, 2, 3]);
     expect(patch).toEqual({ note: 'batch 7' });
     expectOnlyCalled(API.bulkUpdate);
+  });
+
+  it('bulk edit into a location the server refuses shows the translated location_full toast', async () => {
+    m.getLocations.mockResolvedValue([
+      { id: 5, name: 'Roomy', identifier: null, spool_count: 2, capacity: 10, created_at: '', updated_at: '' },
+    ]);
+    m[API.bulkUpdate].mockRejectedValue(
+      new ApiError('english fallback', 409, 'location_full', {
+        code: 'location_full',
+        location_name: 'Roomy',
+        capacity: 10,
+        occupied: 9,
+        free: 1,
+        incoming: 3,
+      }),
+    );
+    await selectAllThree();
+    fireEvent.click(toolbarButton(/^Edit$/));
+    const locLabel = await screen.findByText('Storage Location', { selector: 'label' });
+    const fieldRow = locLabel.closest('div.flex.items-start') as HTMLElement;
+    fireEvent.click(within(fieldRow).getByRole('checkbox'));
+    fireEvent.focus(within(fieldRow).getByRole('textbox'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Roomy (8 free of 10)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to 3 spools' }));
+
+    expect(await screen.findByText('"Roomy" only has room for 1 more (9/10).')).toBeInTheDocument();
+  });
+
+  it('bulk restore that leaves a location over capacity shows a warning toast', async () => {
+    spools = [1, 2, 3].map((id) => spool(id, { archived_at: '2026-04-01T00:00:00Z' }));
+    m[API.bulkRestore].mockResolvedValue({
+      restored: 3,
+      errors: [],
+      capacity_warnings: [
+        { location_id: 5, location_name: 'Bin', capacity: 2, occupied: 4, over_by: 2, incoming: 0 },
+      ],
+    });
+    render(<InventoryPageRouter />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Archived' }));
+    for (const id of [1, 2, 3]) {
+      fireEvent.click(within(await row(id)).getByRole('checkbox', { name: 'Select row' }));
+    }
+    fireEvent.click(toolbarButton(/^Restore$/));
+    await screen.findByText('Restore selected spools');
+    fireEvent.click(lastButton('Restore'));
+
+    expect(await screen.findByText('Locations over capacity: Bin (4/2 spools)')).toBeInTheDocument();
+  });
+
+  it('location filter shows occupancy and marks over-capacity locations', async () => {
+    m.getLocations.mockResolvedValue([
+      { id: 5, name: 'Bin', identifier: null, spool_count: 3, capacity: 4, created_at: '', updated_at: '' },
+      { id: 6, name: 'Over', identifier: null, spool_count: 3, capacity: 2, created_at: '', updated_at: '' },
+      { id: 7, name: 'Free', identifier: null, spool_count: 9, capacity: 0, created_at: '', updated_at: '' },
+    ]);
+    render(<InventoryPageRouter />);
+
+    expect(await screen.findByRole('option', { name: 'Bin (3/4)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Over (3/2) ⚠' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Free' })).toBeInTheDocument();
   });
 
   it('sync to scale weight sends (spool.id, last_scale_weight) to the mode\'s endpoint', async () => {

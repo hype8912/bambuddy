@@ -5114,6 +5114,7 @@ export default {
     manage: 'Locations',
     capacity: 'Capacity',
     capacityHint: 'Maximum number of spools. 0 = unlimited.',
+    capacityInvalid: 'Enter a whole number from 0 to {{max}} (0 = unlimited).',
     full: 'Full',
     exceedsCapacity: 'Exceeds capacity',
     capacityBelowOccupancy: '"{{name}}" holds {{occupied}} spools. Capacity cannot be set below that.',

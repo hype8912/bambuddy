@@ -196,6 +196,34 @@ describe('LocationsModal', () => {
     });
   });
 
+  it.each([['-3'], [''], ['2.7'], ['100001']])(
+    'blocks save and shows an error for an invalid capacity (%j)',
+    async (value) => {
+      const user = userEvent.setup();
+      renderModal();
+      await screen.findByText('Shelf A');
+      await user.click(screen.getByRole('button', { name: /add location|locations\.add/i }));
+      await user.type(screen.getByLabelText(/^name$|locations\.name/i), 'Bin');
+      const cap = screen.getByLabelText(/capacity/i);
+      await user.clear(cap);
+      if (value) await user.type(cap, value);
+
+      expect(cap).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByRole('alert')).toHaveTextContent(/whole number|capacityInvalid/i);
+      expect(screen.getByRole('button', { name: /save|common\.save/i })).toBeDisabled();
+      expect(api.createLocation).not.toHaveBeenCalled();
+    },
+  );
+
+  it('loads the current capacity when editing', async () => {
+    vi.mocked(api.getLocations).mockResolvedValue([{ ...locations[0], capacity: 6 }]);
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText('Shelf A');
+    await user.click(screen.getAllByTitle(/edit|common\.edit/i)[0]);
+    expect(screen.getByLabelText(/capacity/i)).toHaveValue(6);
+  });
+
   it('shows a capacity_below_occupancy 409 as a translated error', async () => {
     const err = new ApiError('raw english', 409);
     (err as unknown as { code: string }).code = 'capacity_below_occupancy';

@@ -5112,6 +5112,7 @@ export default {
     manage: 'Locaties',
     capacity: 'Capaciteit',
     capacityHint: 'Maximaal aantal spoelen. 0 = onbeperkt.',
+    capacityInvalid: 'Voer een geheel getal van 0 tot {{max}} in (0 = onbeperkt).',
     full: 'Vol',
     exceedsCapacity: 'Capaciteit overschreden',
     capacityBelowOccupancy: '"{{name}}" bevat {{occupied}} spoelen. De capaciteit kan niet lager zijn.',

@@ -5077,6 +5077,7 @@ export default {
     manage: 'Lagerorte',
     capacity: 'Kapazität',
     capacityHint: 'Maximale Spulenanzahl. 0 = unbegrenzt.',
+    capacityInvalid: 'Gib eine ganze Zahl von 0 bis {{max}} ein (0 = unbegrenzt).',
     full: 'Voll',
     exceedsCapacity: 'Kapazität überschritten',
     capacityBelowOccupancy: '„{{name}}“ enthält {{occupied}} Spulen. Die Kapazität kann nicht darunter liegen.',

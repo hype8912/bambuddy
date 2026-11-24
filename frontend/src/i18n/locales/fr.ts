@@ -5065,6 +5065,7 @@ export default {
     manage: 'Emplacements',
     capacity: 'Capacité',
     capacityHint: 'Nombre maximal de bobines. 0 = illimité.',
+    capacityInvalid: 'Saisissez un nombre entier de 0 à {{max}} (0 = illimité).',
     full: 'Plein',
     exceedsCapacity: 'Capacité dépassée',
     capacityBelowOccupancy: '« {{name}} » contient {{occupied}} bobines. La capacité ne peut pas être inférieure.',

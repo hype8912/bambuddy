@@ -4857,6 +4857,7 @@ export default {
     manage: "Места хранения",
     capacity: 'Вместимость',
     capacityHint: 'Максимальное число катушек. 0 = без ограничений.',
+    capacityInvalid: 'Введите целое число от 0 до {{max}} (0 = без ограничений).',
     full: 'Заполнено',
     exceedsCapacity: 'Вместимость превышена',
     capacityBelowOccupancy: 'В «{{name}}» уже {{occupied}} катушек. Вместимость не может быть меньше.',

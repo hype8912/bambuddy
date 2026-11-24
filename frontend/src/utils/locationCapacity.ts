@@ -1,6 +1,9 @@
 import type { TFunction } from 'i18next';
 import { ApiError, type CapacityWarning } from '../api/client';
 
+/** Matches the backend's limit (schemas/location.py MAX_LOCATION_CAPACITY). */
+export const MAX_LOCATION_CAPACITY = 100_000;
+
 interface CapacityFields {
   capacity: number;
   spool_count: number;

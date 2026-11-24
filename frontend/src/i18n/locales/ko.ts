@@ -4867,6 +4867,7 @@ export default {
     manage: '위치',
     capacity: '용량',
     capacityHint: '최대 스풀 수. 0 = 무제한.',
+    capacityInvalid: '0에서 {{max}} 사이의 정수를 입력하세요 (0 = 무제한).',
     full: '가득 참',
     exceedsCapacity: '용량 초과',
     capacityBelowOccupancy: '"{{name}}"에 스풀이 {{occupied}}개 있습니다. 용량을 그보다 작게 설정할 수 없습니다.',

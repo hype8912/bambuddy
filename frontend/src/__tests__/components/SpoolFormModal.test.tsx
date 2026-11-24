@@ -30,6 +30,7 @@ vi.mock('../../api/client', () => ({
     getSpoolmanSpoolUsageHistory: vi.fn().mockResolvedValue([]),
     createSpool: vi.fn().mockResolvedValue({ id: 99 }),
     createSpoolmanInventorySpool: vi.fn().mockResolvedValue({ id: 88 }),
+    bulkCreateSpools: vi.fn().mockResolvedValue([]),
     updateSpool: vi.fn().mockResolvedValue({ id: 1 }),
     saveSpoolKProfiles: vi.fn().mockResolvedValue([]),
     getSpoolFilamentPresets: vi.fn().mockResolvedValue([]),
@@ -83,7 +84,7 @@ vi.mock('../../contexts/ToastContext', async (importOriginal) => {
   };
 });
 
-import { api } from '../../api/client';
+import { api, ApiError } from '../../api/client';
 
 /**
  * Open the spool form's "Color & Cost" tab.
@@ -1350,6 +1351,113 @@ describe('SpoolFormModal locationIdTouched', () => {
     expect(payload).not.toHaveProperty('storage_location');
   });
 });
+
+describe('SpoolFormModal location capacity', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(api.getLocations).mockResolvedValue([
+      { id: 1, name: 'Own Bin', identifier: null, spool_count: 4, capacity: 4, created_at: '', updated_at: '' },
+      { id: 2, name: 'Full Bin', identifier: null, spool_count: 2, capacity: 2, created_at: '', updated_at: '' },
+      { id: 3, name: 'Roomy Bin', identifier: null, spool_count: 1, capacity: 4, created_at: '', updated_at: '' },
+      { id: 4, name: 'Over Bin', identifier: null, spool_count: 6, capacity: 4, created_at: '', updated_at: '' },
+    ]);
+  });
+
+  const spoolInOwnBin: InventorySpool = { ...existingSpool, storage_location: 'Own Bin', location_id: 1 };
+
+  async function openEdit(spool: InventorySpool) {
+    render(<SpoolFormModal isOpen={true} onClose={vi.fn()} spool={spool} mode="edit" currencySymbol="$" />);
+    await waitFor(() => expect(screen.getByText('Edit Spool')).toBeInTheDocument());
+    openColorAndCostTab();
+    // The catalog loads asynchronously; wait for its options.
+    await waitFor(() => expect(screen.getByRole('option', { name: /Roomy Bin/ })).toBeInTheDocument());
+  }
+
+  it("disables other full locations but keeps the spool's own selectable", async () => {
+    await openEdit(spoolInOwnBin);
+    expect((screen.getByRole('option', { name: /Own Bin/ }) as HTMLOptionElement).disabled).toBe(false);
+    expect((screen.getByRole('option', { name: /Full Bin/ }) as HTMLOptionElement).disabled).toBe(true);
+    expect(screen.getByRole('option', { name: 'Full Bin (full)' })).toBeInTheDocument();
+    expect((screen.getByRole('option', { name: /Roomy Bin/ }) as HTMLOptionElement).disabled).toBe(false);
+  });
+
+  it('warns when the spool sits in an over-capacity location, and still saves', async () => {
+    await openEdit({ ...existingSpool, storage_location: 'Over Bin', location_id: 4 });
+    expect(await screen.findByText('This location exceeds its capacity (6/4).')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(api.updateSpool).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the translated location_full toast when the save is refused', async () => {
+    const err = new ApiError('english fallback', 409);
+    (err as unknown as { code: string }).code = 'location_full';
+    (err as unknown as { detail: Record<string, unknown> }).detail = {
+      location_name: 'Roomy Bin',
+      capacity: 4,
+      occupied: 4,
+      free: 0,
+      incoming: 1,
+    };
+    vi.mocked(api.updateSpool).mockRejectedValueOnce(err);
+
+    await openEdit(spoolInOwnBin);
+    fireEvent.change(screen.getByLabelText(/storage location/i), { target: { value: '3' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith('"Roomy Bin" is full (4/4).', 'error'),
+    );
+  });
+  it("Spoolman mode: finds the spool's own location by name when it has no location_id", async () => {
+    render(
+      <SpoolFormModal
+        isOpen={true}
+        onClose={vi.fn()}
+        spool={{ ...existingSpool, storage_location: 'own bin', location_id: null }}
+        mode="edit"
+        currencySymbol="$"
+        spoolmanMode={true}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('Edit Spool')).toBeInTheDocument());
+    openColorAndCostTab();
+    await waitFor(() => expect(screen.getByRole('option', { name: /Roomy Bin/ })).toBeInTheDocument());
+
+    expect((screen.getByRole('option', { name: /Own Bin/ }) as HTMLOptionElement).disabled).toBe(false);
+    expect((screen.getByRole('option', { name: /Full Bin/ }) as HTMLOptionElement).disabled).toBe(true);
+  });
+
+  it('bulk create that only partly fits shows the "only has room for" toast', async () => {
+    const err = new ApiError('english fallback', 409);
+    (err as unknown as { code: string }).code = 'location_full';
+    (err as unknown as { detail: Record<string, unknown> }).detail = {
+      location_name: 'Roomy Bin',
+      capacity: 4,
+      occupied: 3,
+      free: 1,
+      incoming: 3,
+    };
+    vi.mocked(api.bulkCreateSpools).mockRejectedValueOnce(err);
+
+    render(<SpoolFormModal isOpen={true} onClose={vi.fn()} mode="create" currencySymbol="$" />);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument());
+
+    const quickAddRow = screen.getByText('Quick Add (Stock)').closest('div[class*="justify-between"]');
+    fireEvent.click(quickAddRow!.querySelector('button[type="button"]')!);
+    const quantityInput = screen.getByText('Quantity').closest('div')!.querySelector('input[type="number"]')!;
+    fireEvent.change(quantityInput, { target: { value: '3' } });
+    const submit = screen
+      .getAllByRole('button', { name: /add spool/i })
+      .find((btn) => btn.tagName === 'BUTTON' && btn.querySelector('svg.lucide-save'));
+    fireEvent.click(submit!);
+
+    await waitFor(() =>
+      expect(mockShowToast).toHaveBeenCalledWith('"Roomy Bin" only has room for 1 more (3/4).', 'error'),
+    );
+  });
+});
+
 
 describe('SpoolFormModal copy mode', () => {
   beforeEach(() => {

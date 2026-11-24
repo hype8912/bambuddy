@@ -26,18 +26,15 @@ def force_sqlite_dialect(monkeypatch):
 
 
 def _register_all_models():
-    import backend.app.models  # noqa: F401
-    from backend.app.models import (  # noqa: F401
-        external_link,
-        location,
-        print_log,
-        print_queue,
-        project_bom,
-        slot_preset,
-        spoolman_k_profile,
-        spoolman_slot_assignment,
-        virtual_printer,
-    )
+    """Import every model module so ``create_all`` builds every table that
+    ``run_migrations`` touches (a hand-kept list goes stale)."""
+    import importlib
+    import pkgutil
+
+    import backend.app.models as models_pkg
+
+    for info in pkgutil.iter_modules(models_pkg.__path__):
+        importlib.import_module(f"{models_pkg.__name__}.{info.name}")
 
 
 @pytest.fixture
@@ -207,3 +204,57 @@ async def test_backfill_links_spool_to_legacy_null_name_key_location(
     # The spool got linked to that legacy row — under the old ordering it
     # would have been left with `location_id IS NULL`.
     assert spool_rows[0].location_id == loc_rows[0].id
+
+
+@pytest.fixture
+async def engine_with_pre_capacity_locations():
+    """A ``locations`` table as releases before the capacity column built it."""
+    from backend.app.core.database import Base
+
+    _register_all_models()
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("DELETE FROM locations"))
+        await conn.execute(text("ALTER TABLE locations DROP COLUMN capacity"))
+        await conn.execute(text("INSERT INTO locations (name, name_key) VALUES ('Old Shelf', 'old shelf')"))
+    yield engine
+    await engine.dispose()
+
+
+async def test_capacity_column_is_added_with_unlimited_default(engine_with_pre_capacity_locations):
+    async with engine_with_pre_capacity_locations.begin() as conn:
+        await run_migrations(conn)
+
+    async with engine_with_pre_capacity_locations.begin() as conn:
+        # Existing rows come out unlimited, and a raw insert that omits the
+        # column (the Postgres restore does this) gets the default too.
+        await conn.execute(text("INSERT INTO locations (name, name_key) VALUES ('New Shelf', 'new shelf')"))
+        rows = (await conn.execute(text("SELECT name, capacity FROM locations ORDER BY name"))).all()
+
+    assert [(r.name, r.capacity) for r in rows] == [("New Shelf", 0), ("Old Shelf", 0)]
+
+
+async def test_capacity_migration_is_idempotent_and_keeps_values(engine_with_pre_capacity_locations):
+    async with engine_with_pre_capacity_locations.begin() as conn:
+        await run_migrations(conn)
+        await conn.execute(text("UPDATE locations SET capacity = 4 WHERE name = 'Old Shelf'"))
+    async with engine_with_pre_capacity_locations.begin() as conn:
+        await run_migrations(conn)
+
+    async with engine_with_pre_capacity_locations.connect() as conn:
+        capacity = (await conn.execute(text("SELECT capacity FROM locations WHERE name = 'Old Shelf'"))).scalar_one()
+
+    assert capacity == 4
+
+
+def test_capacity_column_has_a_server_default_for_restores():
+    """Restoring an older backup into PostgreSQL inserts its rows column by
+    column; a ``locations`` row from before capacity existed has no value for
+    it, so the column must default on the server, not only in the ORM."""
+    from backend.app.models.location import Location
+
+    column = Location.__table__.c.capacity
+    assert column.nullable is False
+    assert column.server_default is not None
+    assert str(column.server_default.arg) == "0"

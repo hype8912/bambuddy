@@ -365,6 +365,8 @@ async def test_ensure_room_partial_room_message(db_session: AsyncSession):
         await ensure_location_has_room(db_session, loc.id, incoming=3)
     assert exc.value.free == 2
     assert "only has room for 2 more" in str(exc.value)
+    # Exactly filling the free slots is allowed.
+    await ensure_location_has_room(db_session, loc.id, incoming=2)
 
 
 @pytest.mark.asyncio

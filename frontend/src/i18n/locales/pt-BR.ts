@@ -5064,6 +5064,7 @@ export default {
     manage: 'Locais',
     capacity: 'Capacidade',
     capacityHint: 'Número máximo de carretéis. 0 = ilimitado.',
+    capacityInvalid: 'Digite um número inteiro de 0 a {{max}} (0 = ilimitado).',
     full: 'Cheio',
     exceedsCapacity: 'Capacidade excedida',
     capacityBelowOccupancy: '"{{name}}" contém {{occupied}} carretéis. A capacidade não pode ser menor.',

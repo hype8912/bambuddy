@@ -5114,6 +5114,7 @@ export default {
     manage: 'Lokalizacje',
     capacity: 'Pojemność',
     capacityHint: 'Maksymalna liczba szpul. 0 = bez limitu.',
+    capacityInvalid: 'Wpisz liczbę całkowitą od 0 do {{max}} (0 = bez limitu).',
     full: 'Pełna',
     exceedsCapacity: 'Przekroczona pojemność',
     capacityBelowOccupancy: '„{{name}}” zawiera {{occupied}} szpul. Pojemność nie może być mniejsza.',

@@ -6,7 +6,13 @@ import { api, type StorageLocation } from '../api/client';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
-import { capacityErrorMessage, formatOccupancy, isLocationFull, isOverCapacity } from '../utils/locationCapacity';
+import {
+  MAX_LOCATION_CAPACITY,
+  capacityErrorMessage,
+  formatOccupancy,
+  isLocationFull,
+  isOverCapacity,
+} from '../utils/locationCapacity';
 import { inventoryLocationsQueryKey, invalidateInventoryLocations } from '../utils/inventoryQueries';
 
 interface LocationsModalProps {
@@ -55,15 +61,16 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
     queryClient.invalidateQueries({ queryKey: ['locationHaSensorReadings'] });
   };
 
-  const parsedCapacity = (() => {
-    const n = Math.floor(Number(capacity));
-    return Number.isFinite(n) && n > 0 ? n : 0;
-  })();
+  // Whole numbers 0..MAX only. Anything else used to fall back to 0
+  // (unlimited) without a word, so "-3" or "abc" silently removed the limit.
+  const capacityValid = /^\d+$/.test(capacity.trim()) && Number(capacity) <= MAX_LOCATION_CAPACITY;
+  const parsedCapacity = capacityValid ? Number(capacity) : 0;
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       const trimmed = name.trim();
       if (!trimmed) throw new Error(t('locations.nameRequired'));
+      if (!capacityValid) throw new Error(t('locations.capacityInvalid', { max: MAX_LOCATION_CAPACITY }));
       if (editing) {
         return api.updateLocation(editing.id, { name: trimmed, capacity: parsedCapacity });
       }
@@ -192,20 +199,28 @@ export function LocationsModal({ open, onClose, onPickLocation, startCreating }:
         id="location-capacity"
         type="number"
         min={0}
+        max={MAX_LOCATION_CAPACITY}
         step={1}
-        className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
+        className={`w-full px-3 py-2 bg-bambu-dark border rounded-lg text-white text-sm focus:outline-none ${
+          capacityValid ? 'border-bambu-dark-tertiary focus:border-bambu-green' : 'border-red-500'
+        }`}
         value={capacity}
         onChange={(e) => setCapacity(e.target.value)}
+        aria-invalid={!capacityValid}
         aria-describedby="location-capacity-hint"
       />
-      <p id="location-capacity-hint" className="text-xs text-bambu-gray mt-1 mb-4">
-        {t('locations.capacityHint')}
+      <p
+        id="location-capacity-hint"
+        className={`text-xs mt-1 mb-4 ${capacityValid ? 'text-bambu-gray' : 'text-red-500'}`}
+        role={capacityValid ? undefined : 'alert'}
+      >
+        {capacityValid ? t('locations.capacityHint') : t('locations.capacityInvalid', { max: MAX_LOCATION_CAPACITY })}
       </p>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={closeEditor}>
           {t('common.cancel')}
         </Button>
-        <Button type="submit" disabled={saveMutation.isPending || !name.trim()}>
+        <Button type="submit" disabled={saveMutation.isPending || !name.trim() || !capacityValid}>
           {saveMutation.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
           {t('common.save')}
         </Button>

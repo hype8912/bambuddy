@@ -5109,6 +5109,7 @@ export default {
     manage: "Розташування",
     capacity: 'Місткість',
     capacityHint: 'Максимальна кількість котушок. 0 = без обмежень.',
+    capacityInvalid: 'Введіть ціле число від 0 до {{max}} (0 = без обмежень).',
     full: 'Заповнено',
     exceedsCapacity: 'Місткість перевищено',
     capacityBelowOccupancy: '«{{name}}» містить котушок: {{occupied}}. Місткість не може бути меншою.',

@@ -5064,6 +5064,7 @@ export default {
     manage: 'Ubicazioni',
     capacity: 'Capacità',
     capacityHint: 'Numero massimo di bobine. 0 = illimitato.',
+    capacityInvalid: 'Inserisci un numero intero da 0 a {{max}} (0 = illimitato).',
     full: 'Pieno',
     exceedsCapacity: 'Capacità superata',
     capacityBelowOccupancy: '«{{name}}» contiene {{occupied}} bobine. La capacità non può essere inferiore.',

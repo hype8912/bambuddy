@@ -5066,6 +5066,7 @@ export default {
     manage: 'Konumlar',
     capacity: 'Kapasite',
     capacityHint: 'En fazla makara sayısı. 0 = sınırsız.',
+    capacityInvalid: '0 ile {{max}} arasında bir tam sayı girin (0 = sınırsız).',
     full: 'Dolu',
     exceedsCapacity: 'Kapasite aşıldı',
     capacityBelowOccupancy: '"{{name}}" {{occupied}} makara içeriyor. Kapasite bunun altına ayarlanamaz.',
