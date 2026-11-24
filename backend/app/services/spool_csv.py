@@ -25,6 +25,12 @@ from backend.app.models.color_catalog import ColorCatalogEntry
 from backend.app.models.spool import Spool
 from backend.app.models.supplier import Supplier, supplier_name_key
 from backend.app.schemas.spool import SpoolCreate
+from backend.app.services.location_service import (
+    CapacityWarning,
+    count_internal_spools_at_location,
+    location_name_key,
+    resolve_location_by_name,
+)
 
 # Fixed CSV header, in output order. Round-trips cleanly: export writes these
 # columns, import expects them. `material` is the only required field; the rest
@@ -143,6 +149,9 @@ class ImportPreview(BaseModel):
     skipped_count: int
     rows: list[ImportRowResult]
     warnings: list[str] = []
+    # Storage locations the valid rows would push over their capacity. A
+    # warning only: the import is not blocked.
+    capacity_warnings: list[CapacityWarning] = []
 
 
 class ImportResult(BaseModel):
@@ -152,6 +161,7 @@ class ImportResult(BaseModel):
     skipped: int
     errors: int
     error_rows: list[ImportRowResult] = []
+    capacity_warnings: list[CapacityWarning] = []
 
 
 def _normalize_header(name: str) -> str:
@@ -311,6 +321,39 @@ def _empty_preview(warnings: list[str]) -> ImportPreview:
         rows=[],
         warnings=warnings,
     )
+
+
+async def _capacity_warnings_for_rows(db: AsyncSession, rows: list[ImportRowResult]) -> list[CapacityWarning]:
+    """Existing limited locations the valid rows would overfill. Never writes.
+
+    Locations that don't exist yet are created unlimited by the import, so they
+    can't be over capacity and get no warning.
+    """
+    incoming: dict[str, int] = {}
+    for row in rows:
+        name = (row.spool or {}).get("storage_location") if row.status == "valid" else None
+        if isinstance(name, str) and name.strip():
+            key = location_name_key(name)
+            incoming[key] = incoming.get(key, 0) + 1
+    warnings: list[CapacityWarning] = []
+    for key in sorted(incoming):
+        location = await resolve_location_by_name(db, key, create=False)
+        if location is None or location.capacity <= 0:
+            continue
+        occupied = await count_internal_spools_at_location(db, location.id)
+        over_by = occupied + incoming[key] - location.capacity
+        if over_by > 0:
+            warnings.append(
+                CapacityWarning(
+                    location_id=location.id,
+                    location_name=location.name,
+                    capacity=location.capacity,
+                    occupied=occupied,
+                    over_by=over_by,
+                    incoming=incoming[key],
+                )
+            )
+    return warnings
 
 
 async def parse_and_validate(raw_bytes: bytes, db: AsyncSession) -> ImportPreview:
@@ -585,6 +628,7 @@ async def parse_and_validate(raw_bytes: bytes, db: AsyncSession) -> ImportPrevie
         skipped_count=skipped,
         rows=rows,
         warnings=warnings,
+        capacity_warnings=await _capacity_warnings_for_rows(db, rows),
     )
 
 

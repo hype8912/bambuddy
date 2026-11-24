@@ -79,8 +79,10 @@ from backend.app.services.location_service import (
     assign_location_name,
     count_internal_spools_at_location,
     count_spoolman_spools_by_location_key,
+    ensure_location_has_room,
     get_location_by_id,
     get_location_by_name,
+    internal_capacity_warnings,
     prepare_internal_spool_payload,
     rename_location as rename_location_record,
 )
@@ -734,7 +736,7 @@ async def create_location(
     existing = await get_location_by_name(db, data.name)
     if existing:
         raise HTTPException(status_code=409, detail=DUPLICATE_LOCATION_NAME)
-    location = Location(identifier=data.identifier)
+    location = Location(identifier=data.identifier, capacity=data.capacity)
     assign_location_name(location, data.name)
     db.add(location)
     try:
@@ -762,6 +764,34 @@ async def update_location(
     old_name = location.name
     if data.identifier is not None:
         location.identifier = data.identifier or None
+
+    # Lowering the capacity below what the location already holds is refused;
+    # 0 (unlimited) is always allowed.
+    # Raising a limit can't violate it, so only a lowered (or newly set) one is counted.
+    lowers_or_sets = (
+        data.capacity is not None
+        and data.capacity > 0
+        and (location.capacity == 0 or data.capacity < location.capacity)
+    )
+    if lowers_or_sets:
+        settings = await _load_settings_map(db)
+        occupied = (await _spool_counts_for_locations(db, [location], settings, strict=True)).get(location.id, 0)
+        if occupied > data.capacity:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "capacity_below_occupancy",
+                    "message": (
+                        f"Location '{location.name}' holds {occupied} spools; capacity cannot be set below {occupied}"
+                    ),
+                    "location_id": location.id,
+                    "location_name": location.name,
+                    "occupied": occupied,
+                    "capacity": data.capacity,
+                },
+            )
+    if data.capacity is not None:
+        location.capacity = data.capacity
 
     if data.name is not None and data.name != old_name:
         try:
@@ -1553,7 +1583,13 @@ async def import_spools_csv(
         # leaves the column blank is stating "no number", not asking for
         # one to be guessed from whatever else is in the inventory.
         # The file has no lock column: a used weight in it is locked.
-        spool = Spool(**_lock_entered_weight(dict(row.spool or {}), set()))
+        fields = dict(row.spool or {})
+        if (fields.get("storage_location") or "").strip():
+            # Resolve the name to a catalog location (creating it when new) so
+            # the spool gets its location_id, like every other create path.
+            # Capacity is not enforced here: the preview already warned.
+            fields = await prepare_internal_spool_payload(db, fields, {"storage_location"})
+        spool = Spool(**_lock_entered_weight(fields, set()))
         if row.keeps_id is not None:
             spool.id = row.keeps_id
         db.add(spool)
@@ -1593,6 +1629,7 @@ async def import_spools_csv(
         skipped=preview.skipped_count,
         errors=preview.error_count,
         error_rows=[r for r in preview.rows if r.status == "error"],
+        capacity_warnings=preview.capacity_warnings,
     )
 
 
@@ -1673,6 +1710,7 @@ async def create_spool(
         payload = await prepare_internal_spool_payload(db, spool_data.model_dump(), set(spool_data.model_fields_set))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await ensure_location_has_room(db, payload.get("location_id"), incoming=1)
     payload = _lock_entered_weight(payload, set(spool_data.model_fields_set))
     # A new spool of an already-numbered product inherits its material number (#2870).
     payload = await apply_material_number_inheritance(db, payload)
@@ -1704,6 +1742,7 @@ async def bulk_create_spools(
         payload = await prepare_internal_spool_payload(db, data.spool.model_dump(), fields_set)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await ensure_location_has_room(db, payload.get("location_id"), incoming=data.quantity)
     payload = _lock_entered_weight(payload, fields_set)
     # A new spool of an already-numbered product inherits its material number (#2870).
     payload = await apply_material_number_inheritance(db, payload)
@@ -1747,6 +1786,11 @@ async def update_spool(
         update_data = await prepare_internal_spool_payload(db, update_data, set(spool_data.model_fields_set))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Only a move INTO a location takes a new slot. Editing a spool where it
+    # already sits (even in an over-capacity location) and archived spools are
+    # never refused.
+    if "location_id" in update_data and update_data["location_id"] != spool.location_id and spool.archived_at is None:
+        await ensure_location_has_room(db, update_data["location_id"], incoming=1)
     # Auto-lock weight when user explicitly sets weight_used
     if "weight_used" in update_data and "weight_locked" not in update_data:
         update_data["weight_locked"] = True
@@ -1845,6 +1889,9 @@ async def restore_spool(
     if not spool:
         raise HTTPException(404, "Spool not found")
 
+    if spool.archived_at is not None:
+        # Un-archiving takes a slot again. (Bulk restore warns instead.)
+        await ensure_location_has_room(db, spool.location_id, incoming=1)
     spool.archived_at = None
     await db.commit()
     result = await db.execute(select(Spool).options(*spool_response_loads()).where(Spool.id == spool_id))
@@ -1955,6 +2002,12 @@ async def bulk_update_spools(
     result = await db.execute(select(Spool).where(Spool.id.in_(payload.ids)))
     spools = {s.id: s for s in result.scalars().all()}
     not_found = [sid for sid in payload.ids if sid not in spools]
+    # All-or-nothing: count the spools that would take a NEW slot in the target
+    # (active and not already there) and refuse the whole request if they
+    # don't fit, before anything is written.
+    if prepared.get("location_id") is not None:
+        incoming = sum(1 for s in spools.values() if s.archived_at is None and s.location_id != prepared["location_id"])
+        await ensure_location_has_room(db, prepared["location_id"], incoming=incoming)
     updated_ids: list[int] = []
     for sid, spool in spools.items():
         for field, value in prepared.items():
@@ -2039,7 +2092,17 @@ async def bulk_restore_spools(
     await db.commit()
     if restored:
         await ws_manager.broadcast({"type": "inventory_changed"})
-    return {"restored": len(restored), "already_active": already, "not_found": not_found}
+    # Bulk restore is allowed to overfill a location; report it instead.
+    restored_ids = set(restored)
+    warnings = await internal_capacity_warnings(
+        db, {s.location_id for s in spools if s.id in restored_ids and s.location_id is not None}
+    )
+    return {
+        "restored": len(restored),
+        "already_active": already,
+        "not_found": not_found,
+        "capacity_warnings": [w.model_dump() for w in warnings],
+    }
 
 
 # ── K-Profiles ───────────────────────────────────────────────────────────────

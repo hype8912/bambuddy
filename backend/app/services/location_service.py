@@ -332,6 +332,21 @@ def count_spoolman_spools_by_location_key(spools: Iterable[dict]) -> dict[str, i
     return by_key
 
 
+async def fetch_active_spoolman_spools(client) -> list[dict]:
+    """Non-archived Spoolman spools, or 503 when they can't be read (fail closed)."""
+    from backend.app.services.spoolman import SpoolmanClientError, SpoolmanUnavailableError
+
+    if client is None:
+        raise HTTPException(status_code=503, detail="Spoolman is unavailable")
+    # Narrow on purpose (see sync_locations_from_spoolman): a transport failure
+    # fails closed with 503, a programming bug surfaces as a 500.
+    try:
+        return await client.get_all_spools(allow_archived=False)
+    except (SpoolmanUnavailableError, SpoolmanClientError, httpx.HTTPError) as exc:
+        logger.warning("Failed to fetch Spoolman spools for capacity check: %s", exc)
+        raise HTTPException(status_code=503, detail="Spoolman is unavailable") from exc
+
+
 async def ensure_spoolman_location_has_room(
     db: AsyncSession,
     client,
@@ -353,20 +368,38 @@ async def ensure_spoolman_location_has_room(
     if location is None or location.capacity <= 0:
         return
     if spools is None:
-        if client is None:
-            raise HTTPException(status_code=503, detail="Spoolman is unavailable")
-        from backend.app.services.spoolman import SpoolmanClientError, SpoolmanUnavailableError
-
-        # Narrow on purpose (see sync_locations_from_spoolman): a transport
-        # failure fails closed with 503, a programming bug surfaces as a 500.
-        try:
-            spools = await client.get_all_spools(allow_archived=False)
-        except (SpoolmanUnavailableError, SpoolmanClientError, httpx.HTTPError) as exc:
-            logger.warning("Failed to fetch Spoolman spools for capacity check: %s", exc)
-            raise HTTPException(status_code=503, detail="Spoolman is unavailable") from exc
+        spools = await fetch_active_spoolman_spools(client)
     occupied = count_spoolman_spools_by_location_key(spools).get(location.name_key, 0)
     if occupied + incoming > location.capacity:
         raise LocationFullError(location, occupied, incoming)
+
+
+async def spoolman_capacity_warnings(
+    db: AsyncSession, spools: list[dict], location_names: Iterable[str | None]
+) -> list[CapacityWarning]:
+    """Over-capacity locations among ``location_names``, counted from ``spools`` (non-archived)."""
+    keys: set[str] = set()
+    for name in location_names:
+        if name and name.strip():
+            keys.add(location_name_key(name))
+    if not keys:
+        return []
+    by_key = await get_locations_by_name_keys(db, keys)
+    counts = count_spoolman_spools_by_location_key(spools)
+    warnings = []
+    for key, loc in sorted(by_key.items()):
+        occupied = counts.get(key, 0)
+        if loc.capacity > 0 and occupied > loc.capacity:
+            warnings.append(
+                CapacityWarning(
+                    location_id=loc.id,
+                    location_name=loc.name,
+                    capacity=loc.capacity,
+                    occupied=occupied,
+                    over_by=occupied - loc.capacity,
+                )
+            )
+    return warnings
 
 
 async def enrich_spool_dicts_with_location_id(db: AsyncSession, spools: list[dict]) -> None:
