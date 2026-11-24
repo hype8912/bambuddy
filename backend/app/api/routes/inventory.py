@@ -712,6 +712,7 @@ def _location_to_response(location: Location, spool_count: int) -> LocationRespo
         name=location.name,
         identifier=location.identifier,
         spool_count=spool_count,
+        capacity=location.capacity,
         created_at=location.created_at,
         updated_at=location.updated_at,
     )

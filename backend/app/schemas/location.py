@@ -9,6 +9,7 @@ from backend.app.services.location_service import normalize_location_name
 class LocationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     identifier: str | None = Field(default=None, max_length=100)
+    capacity: int = Field(default=0, ge=0)
 
     @field_validator("name")
     @classmethod
@@ -20,6 +21,7 @@ class LocationUpdate(IgnoresNullForRequiredColumns):
     __orm_table__ = "locations"
     name: str | None = Field(default=None, min_length=1, max_length=255)
     identifier: str | None = Field(default=None, max_length=100)
+    capacity: int | None = Field(default=None, ge=0)
 
     @field_validator("name")
     @classmethod
@@ -34,6 +36,7 @@ class LocationResponse(BaseModel):
     name: str
     identifier: str | None = None
     spool_count: int = 0
+    capacity: int = 0
     created_at: datetime
     updated_at: datetime
 
