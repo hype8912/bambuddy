@@ -2,6 +2,11 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Storage locations can have a capacity** — A location, such as a bin for 4 spools, can now be given the number of spools it holds, under **Inventory → Locations**. Once it is full, adding, moving or restoring another spool into it is refused with a message that says which location is full. 0 stays unlimited, the default, and archived spools don't count. Editing, archiving or moving out a spool is never refused. Bulk edit is all or nothing. A bulk restore and the CSV import still go through, with a warning, and the location then shows "exceeds capacity" until it is back under its limit. A limit can't be lowered below the spools already in the location, and can be at most 100,000. The Locations list shows each location's used/capacity, the spool form and bulk edit show what is free and don't offer a full location, and the location filter marks one over its capacity. In Spoolman mode the counts come from Spoolman, and a limited location can't be added to while Spoolman is unreachable. The AMS sync doesn't check capacity. Translated in all locales.
+
 ## [1.3.2] - 2026-11-20
 
 ### Added
