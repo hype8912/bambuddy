@@ -768,15 +768,11 @@ async def update_location(
     # Lowering the capacity below what the location already holds is refused;
     # 0 (unlimited) is always allowed.
     # Raising a limit can't violate it, so only a lowered (or newly set) one is counted.
-    lowers_or_sets = (
-        data.capacity is not None
-        and data.capacity > 0
-        and (location.capacity == 0 or data.capacity < location.capacity)
-    )
-    if lowers_or_sets:
+    new_capacity = data.capacity
+    if new_capacity is not None and new_capacity > 0 and (location.capacity == 0 or new_capacity < location.capacity):
         settings = await _load_settings_map(db)
         occupied = (await _spool_counts_for_locations(db, [location], settings, strict=True)).get(location.id, 0)
-        if occupied > data.capacity:
+        if occupied > new_capacity:
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -787,7 +783,7 @@ async def update_location(
                     "location_id": location.id,
                     "location_name": location.name,
                     "occupied": occupied,
-                    "capacity": data.capacity,
+                    "capacity": new_capacity,
                 },
             )
     if data.capacity is not None:

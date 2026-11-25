@@ -950,7 +950,8 @@ async def update_spool(
         # spool holds none. Checked before the filament is touched below.
         cur_location = current.get("location")
         moves_in = (
-            bool(storage_location and storage_location.strip())
+            storage_location is not None
+            and bool(storage_location.strip())
             and not current.get("archived")
             and (
                 not isinstance(cur_location, str)
@@ -1338,7 +1339,7 @@ async def bulk_update_spools(
     if "location_id" in fields_set or "storage_location" in fields_set:
         client = await _get_client(db)
         try:
-            target, _ = await resolve_spoolman_location_string(
+            target, _resolved_name = await resolve_spoolman_location_string(
                 db,
                 location_id=payload.update.location_id,
                 storage_location=payload.update.storage_location,
