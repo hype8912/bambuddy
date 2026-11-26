@@ -1,10 +1,13 @@
 name: Publish Docker image
 
 # Builds the production image (linux/arm64 only) and pushes it to GHCR tagged
-# with the short commit SHA, e.g. ghcr.io/maziggy/bambuddy:cf2f95f
+# with the short commit SHA, e.g. ghcr.io/maziggy/bambuddy:cf2f95f. Builds from
+# main are additionally tagged `latest`.
 #
-# Runs only after the CI workflow succeeded on a push to main, so a red build
-# is never published. Old SHA tags are pruned by docker-retention.yml.
+# Runs automatically after the CI workflow succeeded on a push to main, so a
+# red build is never published. It can also be started manually from the
+# Actions tab on any branch, which builds that branch's latest commit without
+# waiting for CI. Old SHA tags are pruned by docker-retention.yml.
 
 on:
   workflow_run:
@@ -16,8 +19,11 @@ on:
 permissions:
   contents: read
 
+# One group per branch. GitHub keeps only one pending run per group, so a
+# shared group would let a manual branch run cancel a queued main publish.
+# Within a branch, runs queue in order so `latest` ends on the newest commit.
 concurrency:
-  group: docker-publish
+  group: docker-publish-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -26,10 +32,12 @@ jobs:
     # Native arm64 runner: no QEMU emulation, much faster than cross-building.
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
-    # Publish only commits pushed to main of this repository. workflow_run has
-    # access to secrets, so never act on a run that came from a PR or a fork.
+    # Manual runs publish whichever branch they were started on (for testing a
+    # branch build); starting one from a tag is skipped. Automatic runs publish
+    # only commits pushed to main of this repository: workflow_run has access
+    # to secrets, so never act on a run that came from a PR or a fork.
     if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
@@ -52,14 +60,22 @@ jobs:
       - name: Attach HEAD to branch
         run: git checkout -B "$BRANCH" "$COMMIT_SHA"
 
+      # Every build gets the short SHA tag; builds from main also move `latest`.
       # Cut the SHA string rather than `git rev-parse --short`, which may emit
       # more than 7 chars to stay unambiguous; docker-retention.yml matches
       # exactly 7 hex chars.
-      - name: Compute image name and short SHA
+      - name: Compute image tags
         id: vars
         run: |
-          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-          echo "sha=${COMMIT_SHA::7}" >> "$GITHUB_OUTPUT"
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo "tags<<EOF"
+            echo "${image}:${COMMIT_SHA::7}"
+            if [ "$BRANCH" = "main" ]; then
+              echo "${image}:latest"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4
 
@@ -77,7 +93,7 @@ jobs:
           file: Dockerfile
           push: true
           platforms: linux/arm64
-          tags: ${{ steps.vars.outputs.image }}:${{ steps.vars.outputs.sha }}
+          tags: ${{ steps.vars.outputs.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ env.COMMIT_SHA }}
