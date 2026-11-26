@@ -75,7 +75,12 @@ export interface BulkEditSpoolsModalProps {
   isOpen: boolean;
   selectedCount: number;
   isPending: boolean;
-  availableLocations: Array<{ id: number; name: string }>;
+  availableLocations: Array<{ id: number; name: string; capacity?: number; spool_count?: number }>;
+  /** Active (non-archived) selected spools already sitting in each location, by location id.
+   *  Moving them into the same location takes no extra slot. */
+  selectedActiveByLocation?: Record<number, number>;
+  /** How many of the selected spools are active (archived spools take no slot). */
+  selectedActiveCount?: number;
   /** Materials seen in the user's inventory — combined with the MATERIALS constant for suggestions. */
   availableMaterials: string[];
   availableSubtypes: string[];
@@ -93,6 +98,7 @@ export interface BulkEditSpoolsModalProps {
 interface Option {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 interface SearchableSelectProps {
@@ -179,7 +185,8 @@ function SearchableSelect({ value, onChange, options, allowCustom, placeholderKe
             <button
               key={opt.value}
               type="button"
-              className={`w-full px-3 py-2 text-left text-sm hover:bg-bambu-dark-tertiary ${
+              disabled={opt.disabled}
+              className={`w-full px-3 py-2 text-left text-sm hover:bg-bambu-dark-tertiary disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent ${
                 value === opt.value ? 'bg-bambu-green/10 text-bambu-green' : 'text-white'
               }`}
               onClick={() => {
@@ -221,7 +228,7 @@ function combineUnique(...lists: string[][]): string[] {
 
 export function BulkEditSpoolsModal({
   isOpen, selectedCount, isPending,
-  availableLocations, availableMaterials, availableSubtypes, availableBrands, availableCategories,
+  availableLocations, selectedActiveByLocation = {}, selectedActiveCount = 0, availableMaterials, availableSubtypes, availableBrands, availableCategories,
   availableMaterialNumbers, availableSlicerFilaments, availableSlicerFilamentNames,
   spoolmanMode = false,
   onClose, onApply,
@@ -318,8 +325,20 @@ export function BulkEditSpoolsModal({
     return [...fromPresets, ...fromInventory].sort((a, b) => a.label.localeCompare(b.label));
   }, [filamentOptions, availableSlicerFilamentNames]);
   const locationOptions: Option[] = useMemo(
-    () => availableLocations.map((l) => ({ value: String(l.id), label: l.name })),
-    [availableLocations],
+    () =>
+      availableLocations.map((l) => {
+        const capacity = l.capacity ?? 0;
+        if (capacity <= 0) return { value: String(l.id), label: l.name };
+        const free = Math.max(0, capacity - (l.spool_count ?? 0));
+        // Spools already in this location keep their slot, so only the rest need room.
+        const needed = selectedActiveCount - (selectedActiveByLocation[l.id] ?? 0);
+        return {
+          value: String(l.id),
+          label: t('inventory.locationFreeSlots', { name: l.name, free, capacity }),
+          disabled: needed > free,
+        };
+      }),
+    [availableLocations, selectedActiveByLocation, selectedActiveCount, t],
   );
 
   if (!isOpen) return null;

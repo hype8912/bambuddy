@@ -13,6 +13,7 @@ import logging
 import re
 import time
 from contextlib import asynccontextmanager, nullcontext
+from contextvars import ContextVar
 from datetime import datetime
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
@@ -67,9 +68,15 @@ from backend.app.schemas.supplier import SpoolSupplierLinkInput
 from backend.app.services import filament_profile_default as profile_defaults, slot_unlink_grace, spool_swaps
 from backend.app.services.ams_assignment_lock import get_spool_move_lock
 from backend.app.services.location_service import (
+    LocationFullError,
     enrich_spool_dicts_with_location_id,
+    ensure_spoolman_location_has_room,
+    fetch_active_spoolman_spools,
+    get_location_by_name,
+    location_name_key,
     maybe_sync_spoolman_locations,
     resolve_spoolman_location_string,
+    spoolman_capacity_warnings,
 )
 from backend.app.services.printer_manager import PrinterManager, printer_manager
 from backend.app.services.slicer_filament_resolver import resolve_slicer_filament, reusable_slot_filament_id
@@ -705,6 +712,11 @@ async def _finish_created_spool(
     return spool
 
 
+# Set by bulk-update after it has checked the whole batch, so the per-spool
+# PATCH it loops over doesn't re-fetch Spoolman's spools for every spool.
+_capacity_prechecked: ContextVar[bool] = ContextVar("spoolman_capacity_prechecked", default=False)
+
+
 @router.post("/spools")
 async def create_spool(
     data: SpoolmanInventoryCreate,
@@ -713,7 +725,6 @@ async def create_spool(
 ) -> dict:
     """Create a new spool in Spoolman, auto-creating vendor and filament as needed."""
     client = await _get_client(db)
-    filament_id = await _resolve_filament_id(data, client)
 
     storage_location = data.storage_location
     if "location_id" in data.model_fields_set or "storage_location" in data.model_fields_set:
@@ -726,6 +737,9 @@ async def create_spool(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Refuse before anything is created in Spoolman (no orphan vendor/filament).
+    await ensure_spoolman_location_has_room(db, client, storage_location, incoming=1)
+    filament_id = await _resolve_filament_id(data, client)
 
     remaining = max(0.0, data.label_weight - data.weight_used)
     try:
@@ -770,16 +784,6 @@ async def bulk_create_spools(
     client = await _get_client(db)
     data = payload.spool
 
-    try:
-        filament_id = await _resolve_filament_id(data, client)
-    except HTTPException as exc:
-        if exc.status_code == 404 and data.spoolman_filament_id is not None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Filament {data.spoolman_filament_id} not found in Spoolman",
-            ) from exc
-        raise
-
     storage_location = data.storage_location
     if "location_id" in data.model_fields_set or "storage_location" in data.model_fields_set:
         try:
@@ -791,6 +795,18 @@ async def bulk_create_spools(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # All-or-nothing: the whole batch must fit, checked before anything is created.
+    await ensure_spoolman_location_has_room(db, client, storage_location, incoming=payload.quantity)
+
+    try:
+        filament_id = await _resolve_filament_id(data, client)
+    except HTTPException as exc:
+        if exc.status_code == 404 and data.spoolman_filament_id is not None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Filament {data.spoolman_filament_id} not found in Spoolman",
+            ) from exc
+        raise
 
     remaining = max(0.0, data.label_weight - data.weight_used)
     created: list[dict] = []
@@ -930,6 +946,21 @@ async def update_spool(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Only a move into a different location takes a new slot; an archived
+        # spool holds none. Checked before the filament is touched below.
+        cur_location = current.get("location")
+        moves_in = (
+            storage_location is not None
+            and bool(storage_location.strip())
+            and not current.get("archived")
+            and (
+                not isinstance(cur_location, str)
+                or not cur_location.strip()
+                or location_name_key(cur_location) != location_name_key(storage_location)
+            )
+        )
+        if moves_in and not _capacity_prechecked.get():
+            await ensure_spoolman_location_has_room(db, client, storage_location, incoming=1)
 
     color_hex = spoolman_color_hex(rgba) or rgba
 
@@ -1228,6 +1259,11 @@ async def restore_spool(
     """Restore an archived spool in Spoolman."""
     client = await _get_client(db)
     async with _translate_spoolman_errors():
+        current = await client.get_spool(spool_id)
+    if current.get("archived"):
+        # Un-archiving takes a slot again. (Bulk restore warns instead.)
+        await ensure_spoolman_location_has_room(db, client, current.get("location"), incoming=1)
+    async with _translate_spoolman_errors():
         spool = await client.set_spool_archived(spool_id, archived=False)
     try:
         mapped = _map_spoolman_spool(spool)
@@ -1296,17 +1332,54 @@ async def bulk_update_spools(
     if not update_fields:
         raise HTTPException(status_code=400, detail="update must include at least one field")
 
+    # All-or-nothing capacity check: count the listed active spools that would
+    # take a NEW slot in the target and refuse the whole request up front.
+    prechecked = False
+    fields_set = set(payload.update.model_fields_set)
+    if "location_id" in fields_set or "storage_location" in fields_set:
+        client = await _get_client(db)
+        try:
+            target, _resolved_name = await resolve_spoolman_location_string(
+                db,
+                location_id=payload.update.location_id,
+                storage_location=payload.update.storage_location,
+                fields_set=fields_set,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        target_location = await get_location_by_name(db, target) if target and target.strip() else None
+        if target_location is not None and target_location.capacity > 0:
+            active = await fetch_active_spoolman_spools(client)
+            wanted = set(payload.ids)
+            target_key = target_location.name_key
+            incoming = sum(
+                1
+                for sp in active
+                if sp.get("id") in wanted
+                and not (isinstance(sp.get("location"), str) and location_name_key(sp["location"]) == target_key)
+            )
+            await ensure_spoolman_location_has_room(db, client, target, incoming=incoming, spools=active)
+            prechecked = True
+
     updated = 0
     errors: list[dict] = []
-    for sid in payload.ids:
-        try:
-            await update_spool(spool_id=sid, data=payload.update, db=db, _=None)
-            updated += 1
-        except HTTPException as exc:
-            errors.append({"id": sid, "status": exc.status_code, "detail": exc.detail})
-        except Exception as exc:  # noqa: BLE001 — surface unexpected failures per-row
-            logger.exception("Spoolman bulk-update failed for spool %s", sid)
-            errors.append({"id": sid, "status": 500, "detail": str(exc)})
+    token = _capacity_prechecked.set(prechecked)
+    try:
+        for sid in payload.ids:
+            try:
+                await update_spool(spool_id=sid, data=payload.update, db=db, _=None)
+                updated += 1
+            except LocationFullError as exc:
+                # Not an HTTPException, so without this it would land in the
+                # generic 500 branch below.
+                errors.append({"id": sid, "status": 409, "detail": exc.to_detail()})
+            except HTTPException as exc:
+                errors.append({"id": sid, "status": exc.status_code, "detail": exc.detail})
+            except Exception as exc:  # noqa: BLE001 — surface unexpected failures per-row
+                logger.exception("Spoolman bulk-update failed for spool %s", sid)
+                errors.append({"id": sid, "status": 500, "detail": str(exc)})
+    finally:
+        _capacity_prechecked.reset(token)
     if updated:
         await ws_manager.broadcast({"type": "inventory_changed"})
     return {"updated": updated, "errors": errors}
@@ -1380,20 +1453,31 @@ async def bulk_restore_spools(
     """Restore every listed archived Spoolman spool. Per-spool failures are collected."""
     client = await _get_client(db)
     restored = 0
+    restored_locations: list[str | None] = []
     errors: list[dict] = []
     for sid in payload.ids:
         try:
             async with _translate_spoolman_errors():
-                await client.set_spool_archived(sid, archived=False)
+                spool = await client.set_spool_archived(sid, archived=False)
+            restored_locations.append(spool.get("location") if isinstance(spool, dict) else None)
             restored += 1
         except HTTPException as exc:
             errors.append({"id": sid, "status": exc.status_code, "detail": exc.detail})
         except Exception as exc:  # noqa: BLE001 — surface unexpected failures per-row
             logger.exception("Spoolman bulk-restore failed for spool %s", sid)
             errors.append({"id": sid, "status": 500, "detail": str(exc)})
+    capacity_warnings: list[dict] = []
     if restored:
         await ws_manager.broadcast({"type": "inventory_changed"})
-    return {"restored": restored, "errors": errors}
+        # Bulk restore may overfill a location; report it instead of refusing.
+        # A failed count must not turn a completed restore into an error.
+        try:
+            active = await client.get_all_spools(allow_archived=False)
+            warnings = await spoolman_capacity_warnings(db, active, restored_locations)
+            capacity_warnings = [w.model_dump() for w in warnings]
+        except Exception:  # noqa: BLE001 — the restore already happened
+            logger.warning("Capacity warnings after Spoolman bulk-restore unavailable", exc_info=True)
+    return {"restored": restored, "errors": errors, "capacity_warnings": capacity_warnings}
 
 
 @router.post("/spools/reset-consumed-counter-bulk")

@@ -24,6 +24,7 @@ import { SupplierSection, type SupplierLinkDraft } from './spool-form/SupplierSe
 import { SpoolmanFilamentPicker } from './spool-form/SpoolmanFilamentPicker';
 import { PrinterProfilesSection } from './spool-form/PrinterProfilesSection';
 import { ProfileDefaultOption, type ProfileDefaultScope } from './spool-form/ProfileDefaultOption';
+import { capacityErrorMessage } from '../utils/locationCapacity';
 import { normaliseFlow } from '../utils/nozzleFlow';
 import { parseUTCDate, toDateTimeLocalValue } from '../utils/date';
 import { SpoolUsageHistory } from './SpoolUsageHistory';
@@ -115,7 +116,7 @@ export function SpoolFormModal({
 
   // Spool catalog
   const [spoolCatalog, setSpoolCatalog] = useState<SpoolCatalogEntry[]>([]);
-  const [storageLocations, setStorageLocations] = useState<{ id: number; name: string }[]>([]);
+  const [storageLocations, setStorageLocations] = useState<{ id: number; name: string; capacity: number; spool_count: number }[]>([]);
 
   // Local presets (OrcaSlicer imports)
   const [localPresets, setLocalPresets] = useState<LocalPreset[]>([]);
@@ -281,7 +282,7 @@ export function SpoolFormModal({
       api.getColorCatalog().then(setColorCatalog).catch(console.error);
       api.getLocalPresets().then(r => setLocalPresets(r.filament)).catch(console.error);
       api.getBuiltinFilaments().then(setBuiltinFilaments).catch(console.error);
-      api.getLocations().then((locs) => setStorageLocations(locs.map((l) => ({ id: l.id, name: l.name })))).catch(console.error);
+      api.getLocations().then((locs) => setStorageLocations(locs.map((l) => ({ id: l.id, name: l.name, capacity: l.capacity, spool_count: l.spool_count })))).catch(console.error);
 
       // Fetch printer calibrations if not provided via props
       if (printersWithCalibrations.length === 0) {
@@ -751,7 +752,10 @@ export function SpoolFormModal({
       onClose();
     },
     onError: (error: Error) => {
-      if (error instanceof ApiError && error.status === 503) {
+      const capacityMessage = capacityErrorMessage(t, error);
+      if (capacityMessage) {
+        showToast(capacityMessage, 'error');
+      } else if (error instanceof ApiError && error.status === 503) {
         showToast(t('inventory.spoolmanUnreachable'), 'error');
       } else {
         showToast(t('inventory.saveFailed'), 'error');
@@ -809,7 +813,10 @@ export function SpoolFormModal({
       onClose();
     },
     onError: (error: Error) => {
-      if (error instanceof ApiError && error.status === 503) {
+      const capacityMessage = capacityErrorMessage(t, error);
+      if (capacityMessage) {
+        showToast(capacityMessage, 'error');
+      } else if (error instanceof ApiError && error.status === 503) {
         showToast(t('inventory.spoolmanUnreachable'), 'error');
       } else {
         showToast(t('inventory.saveFailed'), 'error');
@@ -835,7 +842,10 @@ export function SpoolFormModal({
       onClose();
     },
     onError: (error: Error) => {
-      if (error instanceof ApiError && error.status === 503) {
+      const capacityMessage = capacityErrorMessage(t, error);
+      if (capacityMessage) {
+        showToast(capacityMessage, 'error');
+      } else if (error instanceof ApiError && error.status === 503) {
         showToast(t('inventory.spoolmanUnreachable'), 'error');
       } else {
         showToast(t('inventory.saveFailed'), 'error');
@@ -1365,11 +1375,21 @@ export function SpoolFormModal({
                   availableCategories={availableCategories}
                   availableMaterialNumbers={availableMaterialNumbers}
                   availableLocations={storageLocations}
+                  currentLocationId={
+                    isEditing && spool
+                      ? (spool.location_id ??
+                        storageLocations.find(
+                          (l) => l.name.trim().toLowerCase() === (spool.storage_location ?? '').trim().toLowerCase(),
+                        )?.id ??
+                        null)
+                      : null
+                  }
+                  ignoreLocationCapacity={isEditing && !!spool?.archived_at}
                   showLastDried={isEditing}
                   onCreateLocation={async (name) => {
                     try {
                       const created = await api.createLocation({ name });
-                      setStorageLocations((prev) => [...prev, { id: created.id, name: created.name }].sort((a, b) => a.name.localeCompare(b.name)));
+                      setStorageLocations((prev) => [...prev, { id: created.id, name: created.name, capacity: created.capacity, spool_count: created.spool_count }].sort((a, b) => a.name.localeCompare(b.name)));
                       await invalidateInventoryLocations(queryClient);
                       return { id: created.id, name: created.name };
                     } catch (e) {

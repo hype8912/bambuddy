@@ -335,6 +335,43 @@ describe('QrAssignTargetModal', () => {
       expect(screen.getByTestId('toast-viewport')).not.toContainElement(why);
     });
 
+    it('storage: a full location is explained in the dialog, translated', async () => {
+      server.use(
+        http.patch('/api/v1/inventory/spools/:id', () =>
+          HttpResponse.json(
+            {
+              detail: {
+                code: 'location_full',
+                message: 'english fallback',
+                location_id: 7,
+                location_name: 'Shelf A',
+                capacity: 2,
+                occupied: 2,
+                incoming: 1,
+                free: 0,
+              },
+            },
+            { status: 409 },
+          ),
+        ),
+      );
+      stubPhotoDecoder('https://bambuddy.local/inventory?spool=42');
+      const onClose = vi.fn();
+      render(<QrAssignTargetModal isOpen onClose={onClose} spoolmanMode={false} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /storage/i }));
+      const select = await screen.findByRole('combobox');
+      await screen.findByRole('option', { name: 'Shelf A' });
+      fireEvent.change(select, { target: { value: '7' } });
+      fireEvent.click(screen.getByRole('button', { name: /set target & scan/i }));
+      await screen.findByRole('button', { name: /take photo/i });
+      pickPhoto();
+
+      expect(await screen.findByText(/"Shelf A" is full \(2\/2\)\./)).toBeInTheDocument();
+      expect(screen.queryByText(/english fallback/)).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
     it('built-in: closing the dialog while the spool is looked up assigns nothing (#1606 review)', async () => {
       let lookedUp = false;
       let answer: () => void = () => {};

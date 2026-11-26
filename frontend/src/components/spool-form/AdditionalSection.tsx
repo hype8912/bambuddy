@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useToast } from '../../contexts/ToastContext';
 import { toDateTimeLocalValue } from '../../utils/date';
 import type { AdditionalSectionProps } from './types';
+import { isLocationFull, isOverCapacity } from '../../utils/locationCapacity';
 
 function SpoolWeightPicker({
   catalog,
@@ -177,6 +178,8 @@ export function AdditionalSection({
   availableCategories,
   availableMaterialNumbers,
   availableLocations = [],
+  currentLocationId = null,
+  ignoreLocationCapacity = false,
   onCreateLocation,
   globalLowStockThreshold,
   spoolmanMode = false,
@@ -427,10 +430,44 @@ export function AdditionalSection({
           }}
         >
           <option value="">{t('inventory.storageLocationNone')}</option>
-          {availableLocations.map((loc) => (
-            <option key={loc.id} value={loc.id}>{loc.name}</option>
-          ))}
+          {availableLocations.map((loc) => {
+            const full = !ignoreLocationCapacity && isLocationFull({ capacity: loc.capacity ?? 0, spool_count: loc.spool_count ?? 0 });
+            // The spool's own location stays selectable: it already holds the slot.
+            const blocked = full && loc.id !== currentLocationId && loc.id !== formData.location_id;
+            return (
+              <option key={loc.id} value={loc.id} disabled={blocked}>
+                {full ? t('inventory.locationFullOption', { name: loc.name }) : loc.name}
+              </option>
+            );
+          })}
         </select>
+        {(() => {
+          const selected = availableLocations.find((l) => l.id === formData.location_id);
+          if (ignoreLocationCapacity || !selected) return null;
+          const occupancy = { capacity: selected.capacity ?? 0, spool_count: selected.spool_count ?? 0 };
+          // A preselected full location the spool isn't already in (e.g. copied
+          // from another spool) would be refused on save, so say so up front.
+          if (selected.id !== currentLocationId && isLocationFull(occupancy)) {
+            return (
+              <p className="text-xs text-red-500 mt-1" role="status">
+                {t('inventory.locationFull', {
+                  name: selected.name,
+                  occupied: occupancy.spool_count,
+                  capacity: occupancy.capacity,
+                })}
+              </p>
+            );
+          }
+          if (!isOverCapacity(occupancy)) return null;
+          return (
+            <p className="text-xs text-yellow-500 mt-1" role="status">
+              {t('inventory.locationOverCapacityWarning', {
+                occupied: occupancy.spool_count,
+                capacity: occupancy.capacity,
+              })}
+            </p>
+          );
+        })()}
         {onCreateLocation && (
           <div className="mt-2 flex gap-2">
             <input

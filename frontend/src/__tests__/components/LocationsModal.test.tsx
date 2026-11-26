@@ -31,8 +31,8 @@ vi.mock('../../contexts/ToastContext', () => ({
 }));
 
 const locations = [
-  { id: 1, name: 'Shelf A', identifier: null, spool_count: 2, created_at: '2026-01-01', updated_at: '2026-01-01' },
-  { id: 2, name: 'Drawer 1', identifier: null, spool_count: 0, created_at: '2026-01-01', updated_at: '2026-01-01' },
+  { id: 1, name: 'Shelf A', identifier: null, spool_count: 2, capacity: 0, created_at: '2026-01-01', updated_at: '2026-01-01' },
+  { id: 2, name: 'Drawer 1', identifier: null, spool_count: 0, capacity: 0, created_at: '2026-01-01', updated_at: '2026-01-01' },
 ];
 
 function renderModal(open = true) {
@@ -88,7 +88,7 @@ describe('LocationsModal', () => {
     await user.type(input, 'Garage');
     await user.click(screen.getByRole('button', { name: /save|common\.save/i }));
     await waitFor(() => {
-      expect(api.createLocation).toHaveBeenCalledWith({ name: 'Garage' });
+      expect(api.createLocation).toHaveBeenCalledWith({ name: 'Garage', capacity: 0 });
     });
     expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/created|locations\.created/i), 'success');
   });
@@ -109,7 +109,7 @@ describe('LocationsModal', () => {
     const input = screen.getByLabelText(/name|locations\.name/i);
     await user.type(input, 'Garage{Enter}');
     await waitFor(() => {
-      expect(api.createLocation).toHaveBeenCalledWith({ name: 'Garage' });
+      expect(api.createLocation).toHaveBeenCalledWith({ name: 'Garage', capacity: 0 });
     });
   });
 
@@ -152,9 +152,101 @@ describe('LocationsModal', () => {
     await user.type(input, 'Drawer 2');
     await user.click(screen.getByRole('button', { name: /save|common\.save/i }));
     await waitFor(() => {
-      expect(api.updateLocation).toHaveBeenCalledWith(2, { name: 'Drawer 2' });
+      expect(api.updateLocation).toHaveBeenCalledWith(2, { name: 'Drawer 2', capacity: 0 });
     });
     expect(mockShowToast).toHaveBeenCalledWith(expect.stringMatching(/updated|locations\.updated/i), 'success');
+  });
+
+  it('shows occupancy with Full and Exceeds-capacity badges', async () => {
+    vi.mocked(api.getLocations).mockResolvedValue([
+      { ...locations[0], id: 10, name: 'Bin Full', spool_count: 4, capacity: 4 },
+      { ...locations[0], id: 11, name: 'Bin Over', spool_count: 6, capacity: 4 },
+      { ...locations[0], id: 12, name: 'Bin Roomy', spool_count: 1, capacity: 4 },
+    ]);
+    renderModal();
+    await screen.findByText('Bin Full');
+    expect(screen.getByText('4/4')).toBeInTheDocument();
+    expect(screen.getByText('6/4')).toBeInTheDocument();
+    expect(screen.getByText('1/4')).toBeInTheDocument();
+    expect(screen.getAllByText(/locations\.full|^full$/i)).toHaveLength(1);
+    expect(screen.getAllByText(/locations\.exceedsCapacity|exceeds capacity/i)).toHaveLength(1);
+  });
+
+  it('sends the capacity entered in the editor', async () => {
+    vi.mocked(api.createLocation).mockResolvedValue({
+      id: 3,
+      name: 'Bin',
+      identifier: null,
+      spool_count: 0,
+      capacity: 4,
+      created_at: '2026-01-01',
+      updated_at: '2026-01-01',
+    });
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText('Shelf A');
+    await user.click(screen.getByRole('button', { name: /add location|locations\.add/i }));
+    await user.type(screen.getByLabelText(/^name$|locations\.name/i), 'Bin');
+    const cap = screen.getByLabelText(/capacity/i);
+    await user.clear(cap);
+    await user.type(cap, '4');
+    await user.click(screen.getByRole('button', { name: /save|common\.save/i }));
+    await waitFor(() => {
+      expect(api.createLocation).toHaveBeenCalledWith({ name: 'Bin', capacity: 4 });
+    });
+  });
+
+  it.each([['-3'], [''], ['2.7'], ['100001']])(
+    'blocks save and shows an error for an invalid capacity (%j)',
+    async (value) => {
+      const user = userEvent.setup();
+      renderModal();
+      await screen.findByText('Shelf A');
+      await user.click(screen.getByRole('button', { name: /add location|locations\.add/i }));
+      await user.type(screen.getByLabelText(/^name$|locations\.name/i), 'Bin');
+      const cap = screen.getByLabelText(/capacity/i);
+      await user.clear(cap);
+      if (value) await user.type(cap, value);
+
+      expect(cap).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByRole('alert')).toHaveTextContent(/whole number|capacityInvalid/i);
+      expect(screen.getByRole('button', { name: /save|common\.save/i })).toBeDisabled();
+      expect(api.createLocation).not.toHaveBeenCalled();
+    },
+  );
+
+  it('loads the current capacity when editing', async () => {
+    vi.mocked(api.getLocations).mockResolvedValue([{ ...locations[0], capacity: 6 }]);
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText('Shelf A');
+    await user.click(screen.getAllByTitle(/edit|common\.edit/i)[0]);
+    expect(screen.getByLabelText(/capacity/i)).toHaveValue(6);
+  });
+
+  it('shows a capacity_below_occupancy 409 as a translated error', async () => {
+    const err = new ApiError('raw english', 409);
+    (err as unknown as { code: string }).code = 'capacity_below_occupancy';
+    (err as unknown as { detail: Record<string, unknown> }).detail = {
+      location_name: 'Shelf A',
+      occupied: 2,
+      capacity: 1,
+    };
+    vi.mocked(api.updateLocation).mockRejectedValue(err);
+    const user = userEvent.setup();
+    renderModal();
+    await screen.findByText('Shelf A');
+    await user.click(screen.getAllByTitle(/edit|common\.edit/i)[0]);
+    const cap = screen.getByLabelText(/capacity/i);
+    await user.clear(cap);
+    await user.type(cap, '1');
+    await user.click(screen.getByRole('button', { name: /save|common\.save/i }));
+    await waitFor(() => {
+      expect(mockShowToast).toHaveBeenCalledWith(
+        expect.stringMatching(/holds 2 spools|capacityBelowOccupancy/),
+        'error',
+      );
+    });
   });
 
   it('deletes an empty location after confirmation', async () => {
@@ -296,7 +388,7 @@ describe('LocationsModal — startCreating', () => {
     await user.type(input, 'Garage');
     await user.click(screen.getByRole('button', { name: /save|common\.save/i }));
 
-    await waitFor(() => expect(api.createLocation).toHaveBeenCalledWith({ name: 'Garage' }));
+    await waitFor(() => expect(api.createLocation).toHaveBeenCalledWith({ name: 'Garage', capacity: 0 }));
     await waitFor(() => expect(mockOnClose).toHaveBeenCalledTimes(1));
     expect(mockOnPickLocation).not.toHaveBeenCalled();
   });

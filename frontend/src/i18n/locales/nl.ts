@@ -5110,6 +5110,12 @@ export default {
     sensors: 'Sensoren',
     empty: 'Nog geen opslaglocaties. Maak je eerste plank of lade.',
     manage: 'Locaties',
+    capacity: 'Capaciteit',
+    capacityHint: 'Maximaal aantal spoelen. 0 = onbeperkt.',
+    capacityInvalid: 'Voer een geheel getal van 0 tot {{max}} in (0 = onbeperkt).',
+    full: 'Vol',
+    exceedsCapacity: 'Capaciteit overschreden',
+    capacityBelowOccupancy: '"{{name}}" bevat {{occupied}} spoelen. De capaciteit kan niet lager zijn.',
     createPlaceholder: 'bijv. Plank A, Lade 1',
     nameRequired: 'Locatienaam is verplicht',
     created: 'Locatie gemaakt',
@@ -5322,6 +5328,8 @@ export default {
       },
     },
     csv: {
+      capacityWarningsHeading: 'Sommige locaties overschrijden na deze import hun capaciteit:',
+      capacityWarningItem: '{{name}} zou {{occupied}} spoelen bevatten (capaciteit {{capacity}})',
       importButton: 'CSV importeren',
       exportButton: 'CSV exporteren',
       modalTitle: 'Spoelen importeren uit CSV',
@@ -5398,6 +5406,13 @@ export default {
     // dropdown header. `storageLocationNone` is new (the "no location set"
     // group, mirrors `categoryNone`).
     storageLocationNone: 'Geen locatie ingesteld',
+    locationFull: '"{{name}}" is vol ({{occupied}}/{{capacity}}).',
+    locationFullPartial: '"{{name}}" heeft nog maar plek voor {{free}} meer ({{occupied}}/{{capacity}}).',
+    locationFullOption: '{{name}} (vol)',
+    locationFreeSlots: '{{name}} ({{free}} vrij van {{capacity}})',
+    locationOverCapacityWarning: 'Deze locatie overschrijdt haar capaciteit ({{occupied}}/{{capacity}}).',
+    capacityWarningsTitle: 'Locaties boven hun capaciteit: {{details}}',
+    capacityWarningItem: '{{name}} ({{occupied}}/{{capacity}} spoelen)',
     lowStockThresholdOverride: 'Drempel lage voorraad (deze spoel)',
     lowStockThresholdOverrideHelp: 'Laat leeg om de globale drempel ({{global}}%) te gebruiken.',
     // Internal material / article number (#2870)

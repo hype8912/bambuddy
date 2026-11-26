@@ -103,4 +103,51 @@ describe('SpoolCsvImportModal', () => {
     const noValid = await screen.findByText('No valid rows');
     expect(noValid.closest('button')).toBeDisabled();
   });
+
+  it('lists the locations that would exceed capacity in the preview', async () => {
+    vi.mocked(api.importSpoolsCsvPreview).mockResolvedValue({
+      ...preview,
+      capacity_warnings: [
+        { location_id: 7, location_name: 'Bin A', capacity: 2, occupied: 1, over_by: 2, incoming: 3 },
+      ],
+    });
+
+    render(<SpoolCsvImportModal onClose={vi.fn()} onImported={vi.fn()} />);
+    selectFile();
+
+    expect(await screen.findByText(/Some locations will exceed their capacity/)).toBeInTheDocument();
+    // The preview count is pre-import (1) plus the incoming rows (3).
+    expect(screen.getByText('Bin A would hold 4 spools (capacity 2)')).toBeInTheDocument();
+  });
+
+  it('shows no capacity block when the preview has no warnings', async () => {
+    vi.mocked(api.importSpoolsCsvPreview).mockResolvedValue({ ...preview, capacity_warnings: [] });
+
+    render(<SpoolCsvImportModal onClose={vi.fn()} onImported={vi.fn()} />);
+    selectFile();
+
+    await screen.findByText('2 valid');
+    expect(screen.queryByText(/Some locations will exceed their capacity/)).not.toBeInTheDocument();
+  });
+
+  it('shows a warning toast after an import that leaves a location over capacity', async () => {
+    vi.mocked(api.importSpoolsCsvPreview).mockResolvedValue(preview);
+    vi.mocked(api.importSpoolsCsv).mockResolvedValue({
+      created: 2,
+      skipped: 0,
+      errors: 1,
+      error_rows: [],
+      capacity_warnings: [
+        { location_id: 7, location_name: 'Bin A', capacity: 2, occupied: 4, over_by: 2, incoming: 0 },
+      ],
+    });
+    const onImported = vi.fn();
+
+    render(<SpoolCsvImportModal onClose={vi.fn()} onImported={onImported} />);
+    selectFile();
+    fireEvent.click(await screen.findByText('Import 2 valid rows'));
+
+    await waitFor(() => expect(onImported).toHaveBeenCalledWith(2));
+    expect(await screen.findByText(/Locations over capacity: Bin A \(4\/2 spools\)/)).toBeInTheDocument();
+  });
 });

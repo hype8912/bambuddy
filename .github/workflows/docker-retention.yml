@@ -1,0 +1,88 @@
+name: GHCR short-SHA retention
+
+# Deletes short-SHA tagged container versions (the ones published by
+# docker-publish.yml) that are older than RETENTION_DAYS. Release tags such as
+# 0.2.0 or latest never match the 7-hex-char pattern and are left alone, and
+# the newest SHA image is always kept so a quiet repo never ends up with none.
+#
+# Deleting a tagged version can leave its platform/attestation manifests
+# untagged; cleanup-ghcr.yml removes those orphans on its weekly run.
+#
+# Uses the same `GHCR_CLEANUP_TOKEN` secret as cleanup-ghcr.yml (classic PAT
+# with `read:packages` + `delete:packages`), because GITHUB_TOKEN cannot delete
+# versions of user-owned packages.
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # Sundays at 02:00 UTC, before cleanup-ghcr.yml at 03:00
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List versions without deleting'
+        type: boolean
+        default: false
+
+permissions: {}
+
+env:
+  RETENTION_DAYS: 30
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [bambuddy]
+    steps:
+      - name: Prune old SHA-tagged versions of ${{ matrix.package }}
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          PACKAGE: ${{ matrix.package }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          gh api "users/${OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
+            --paginate --slurp > all.json
+
+          cutoff=$(date -u -d "${RETENTION_DAYS} days ago" +%s)
+
+          # Versions whose every tag is a 7-char hex SHA, newest first.
+          jq '[add[]
+               | select((.metadata.container.tags | length) > 0
+                        and all(.metadata.container.tags[]; test("^[0-9a-f]{7}$")))]
+              | sort_by(.created_at) | reverse' all.json > sha_versions.json
+          echo "SHA-tagged versions: $(jq length sha_versions.json)"
+
+          # Skip the newest one, then keep anything younger than the cutoff.
+          jq -r --argjson cutoff "$cutoff" '
+            .[1:] | map(select((.created_at | fromdateiso8601) < $cutoff))
+            | .[] | "\(.id) \(.metadata.container.tags | join(","))"
+          ' sha_versions.json > delete.txt
+          echo "Queued for deletion (older than ${RETENTION_DAYS} days): $(wc -l < delete.txt)"
+
+          if [ ! -s delete.txt ]; then
+            echo "Nothing to delete."
+            exit 0
+          fi
+
+          if [ "${DRY_RUN:-false}" = "true" ]; then
+            echo "Dry run — not deleting."
+            cat delete.txt
+            exit 0
+          fi
+
+          deleted=0
+          failed=0
+          while read -r id tags; do
+            if gh api -X DELETE "users/${OWNER}/packages/container/${PACKAGE}/versions/${id}" --silent; then
+              echo "Deleted ${tags} (${id})"
+              deleted=$((deleted + 1))
+            else
+              failed=$((failed + 1))
+            fi
+          done < delete.txt
+          echo "Deleted: $deleted  Failed: $failed"
+          [ "$failed" -eq 0 ]

@@ -6,9 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.location import Location
 from backend.app.models.spool import Spool
 from backend.app.services.location_service import (
+    LocationFullError,
     assign_location_name,
     enrich_spool_dicts_with_location_id,
+    ensure_location_has_room,
+    ensure_spoolman_location_has_room,
     get_location_by_name,
+    internal_capacity_warnings,
     is_ams_slot_location,
     location_name_key,
     prepare_internal_spool_payload,
@@ -289,3 +293,144 @@ async def test_sync_locations_from_spoolman_reports_no_change_when_only_markers(
             return ["H2D-1 - AMS A1", "H2D-1 - AMS A2"]
 
     assert await sync_locations_from_spoolman(db_session, FakeClient()) is False
+
+
+# ── Capacity (storage-location-capacity plan, Phase 2) ──────────────────────
+
+
+async def _make_location(db: AsyncSession, name: str, capacity: int) -> Location:
+    loc = Location(capacity=capacity)
+    assign_location_name(loc, name)
+    db.add(loc)
+    await db.commit()
+    await db.refresh(loc)
+    return loc
+
+
+async def _add_spools(db: AsyncSession, loc: Location, active: int, archived: int = 0) -> None:
+    from datetime import datetime, timezone
+
+    for i in range(active + archived):
+        db.add(
+            Spool(
+                material="PLA",
+                label_weight=1000,
+                core_weight=250,
+                location_id=loc.id,
+                storage_location=loc.name,
+                archived_at=datetime(2026, 1, 1, tzinfo=timezone.utc) if i >= active else None,
+            )
+        )
+    await db.commit()
+
+
+def test_location_full_error_is_not_value_error():
+    # Spool routes map ValueError to 400; this must become a 409 instead.
+    assert not issubclass(LocationFullError, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_unlimited_capacity_never_raises(db_session: AsyncSession):
+    loc = await _make_location(db_session, "Unlimited", 0)
+    await _add_spools(db_session, loc, 10)
+    await ensure_location_has_room(db_session, loc.id, incoming=5)
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_none_location_and_zero_incoming(db_session: AsyncSession):
+    loc = await _make_location(db_session, "Full", 1)
+    await _add_spools(db_session, loc, 1)
+    await ensure_location_has_room(db_session, None, incoming=1)
+    await ensure_location_has_room(db_session, loc.id, incoming=0)
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_full_location_refused_with_detail(db_session: AsyncSession):
+    loc = await _make_location(db_session, "Bin", 4)
+    await _add_spools(db_session, loc, 4)
+    with pytest.raises(LocationFullError) as exc:
+        await ensure_location_has_room(db_session, loc.id, incoming=1)
+    detail = exc.value.to_detail()
+    assert detail["code"] == "location_full"
+    assert detail["location_id"] == loc.id
+    assert (detail["capacity"], detail["occupied"], detail["incoming"], detail["free"]) == (4, 4, 1, 0)
+    assert "is full" in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_partial_room_message(db_session: AsyncSession):
+    loc = await _make_location(db_session, "Half", 4)
+    await _add_spools(db_session, loc, 2)
+    with pytest.raises(LocationFullError) as exc:
+        await ensure_location_has_room(db_session, loc.id, incoming=3)
+    assert exc.value.free == 2
+    assert "only has room for 2 more" in str(exc.value)
+    # Exactly filling the free slots is allowed.
+    await ensure_location_has_room(db_session, loc.id, incoming=2)
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_archived_spools_free_their_slot(db_session: AsyncSession):
+    loc = await _make_location(db_session, "Bin", 4)
+    await _add_spools(db_session, loc, 3, archived=5)
+    await ensure_location_has_room(db_session, loc.id, incoming=1)
+    with pytest.raises(LocationFullError):
+        await ensure_location_has_room(db_session, loc.id, incoming=2)
+
+
+@pytest.mark.asyncio
+async def test_internal_capacity_warnings(db_session: AsyncSession):
+    over = await _make_location(db_session, "Over", 2)
+    exact = await _make_location(db_session, "Exact", 2)
+    unlimited = await _make_location(db_session, "Unlimited", 0)
+    await _add_spools(db_session, over, 5, archived=2)
+    await _add_spools(db_session, exact, 2)
+    await _add_spools(db_session, unlimited, 9)
+
+    warnings = await internal_capacity_warnings(db_session, [over.id, exact.id, unlimited.id])
+    assert len(warnings) == 1
+    w = warnings[0]
+    assert (w.location_id, w.capacity, w.occupied, w.over_by) == (over.id, 2, 5, 3)
+    assert await internal_capacity_warnings(db_session, []) == []
+
+
+@pytest.mark.asyncio
+async def test_spoolman_ensure_room_counts_by_name_key(db_session: AsyncSession):
+    await _make_location(db_session, "Bin A", 2)
+    spools = [{"location": "bin a"}, {"location": " BIN A "}, {"location": "Other"}, {"location": None}]
+    with pytest.raises(LocationFullError) as exc:
+        await ensure_spoolman_location_has_room(db_session, None, "Bin A", incoming=1, spools=spools)
+    assert exc.value.occupied == 2
+    await ensure_spoolman_location_has_room(db_session, None, "Bin A", incoming=0, spools=spools)
+
+
+@pytest.mark.asyncio
+async def test_spoolman_ensure_room_skips_unlimited_and_unknown_without_fetch(db_session: AsyncSession):
+    from unittest.mock import AsyncMock
+
+    await _make_location(db_session, "Free", 0)
+    client = AsyncMock()
+    await ensure_spoolman_location_has_room(db_session, client, "Free", incoming=3)
+    await ensure_spoolman_location_has_room(db_session, client, "Never created", incoming=3)
+    await ensure_spoolman_location_has_room(db_session, None, "Free", incoming=3)
+    client.get_all_spools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_spoolman_ensure_room_unavailable_is_503(db_session: AsyncSession):
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    await _make_location(db_session, "Limited", 2)
+    with pytest.raises(HTTPException) as no_client:
+        await ensure_spoolman_location_has_room(db_session, None, "Limited", incoming=1)
+    assert no_client.value.status_code == 503
+
+    from backend.app.services.spoolman import SpoolmanUnavailableError
+
+    client = AsyncMock()
+    client.get_all_spools.side_effect = SpoolmanUnavailableError("down")
+    with pytest.raises(HTTPException) as failed:
+        await ensure_spoolman_location_has_room(db_session, client, "Limited", incoming=1)
+    assert failed.value.status_code == 503

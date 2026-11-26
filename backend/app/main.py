@@ -137,6 +137,7 @@ from backend.app.services.hms_errors import hms_fault_counts as _hms_fault_count
 from backend.app.services.library_trash import library_trash_service
 from backend.app.services.local_backup import local_backup_service
 from backend.app.services.location_ha_sensor_manager import location_ha_sensor_manager
+from backend.app.services.location_service import LocationFullError
 from backend.app.services.mqtt_relay import mqtt_relay
 from backend.app.services.mqtt_smart_plug import mqtt_smart_plug_service
 from backend.app.services.notification_service import notification_service
@@ -12887,6 +12888,12 @@ async def _validation_error(_request, exc: RequestValidationError) -> JSONRespon
     which JSON cannot hold: the request ended in an error instead of a 422.
     """
     return JSONResponse(status_code=422, content={"detail": _json_safe(jsonable_encoder(exc.errors()))})
+
+
+@app.exception_handler(LocationFullError)
+async def _location_full_error(_request, exc: LocationFullError) -> JSONResponse:
+    """A write would overfill a storage location: 409 with a structured detail."""
+    return JSONResponse(status_code=409, content={"detail": exc.to_detail()})
 
 
 # =============================================================================

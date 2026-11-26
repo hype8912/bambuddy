@@ -5415,6 +5415,8 @@ async def _run_migrations(conn):
     )
     await _safe_execute(conn, "ALTER TABLE locations ADD COLUMN name_key VARCHAR(255)")
     await _safe_execute(conn, "CREATE UNIQUE INDEX IF NOT EXISTS ix_locations_name_key ON locations (name_key)")
+    # Storage capacity per location (0 = unlimited).
+    await _safe_execute(conn, "ALTER TABLE locations ADD COLUMN capacity INTEGER NOT NULL DEFAULT 0")
     await _safe_execute(conn, "ALTER TABLE spool ADD COLUMN location_id INTEGER REFERENCES locations(id)")
     await _safe_execute(conn, "CREATE INDEX IF NOT EXISTS ix_spool_location_id ON spool (location_id)")
 

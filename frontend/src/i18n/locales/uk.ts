@@ -5107,6 +5107,12 @@ export default {
     sensors: "Датчики",
     empty: "Місць зберігання ще немає. Створіть свою першу полицю або ящик.",
     manage: "Розташування",
+    capacity: 'Місткість',
+    capacityHint: 'Максимальна кількість котушок. 0 = без обмежень.',
+    capacityInvalid: 'Введіть ціле число від 0 до {{max}} (0 = без обмежень).',
+    full: 'Заповнено',
+    exceedsCapacity: 'Місткість перевищено',
+    capacityBelowOccupancy: '«{{name}}» містить котушок: {{occupied}}. Місткість не може бути меншою.',
     createPlaceholder: "напр. Полиця А, ящик 1",
     nameRequired: "Потрібно вказати назву місця",
     created: "Розташування створено",
@@ -5318,6 +5324,8 @@ export default {
       },
     },
     csv: {
+      capacityWarningsHeading: 'Після цього імпорту деякі місця перевищать свою місткість:',
+      capacityWarningItem: '{{name}} міститиме котушок: {{occupied}} (місткість {{capacity}})',
       importButton: "Імпорт CSV",
       exportButton: "Експорт CSV",
       modalTitle: "Імпорт котушок з CSV",
@@ -5394,6 +5402,13 @@ export default {
     // dropdown header. `storageLocationNone` is new (the "no location set"
     // group, mirrors `categoryNone`).
     storageLocationNone: "Місцезнаходження не встановлено",
+    locationFull: '«{{name}}» заповнено ({{occupied}}/{{capacity}}).',
+    locationFullPartial: 'У «{{name}}» є місце лише ще для {{free}} ({{occupied}}/{{capacity}}).',
+    locationFullOption: '{{name}} (заповнено)',
+    locationFreeSlots: '{{name}} (вільно {{free}} із {{capacity}})',
+    locationOverCapacityWarning: 'Це місце зберігання перевищує свою місткість ({{occupied}}/{{capacity}}).',
+    capacityWarningsTitle: 'Місця понад місткість: {{details}}',
+    capacityWarningItem: '{{name}} ({{occupied}}/{{capacity}} котушок)',
     lowStockThresholdOverride: "Поріг низького запасу (ця котушка)",
     lowStockThresholdOverrideHelp: "Залиште поле порожнім, щоб використовувати глобальне порогове значення ({{global}}%).",
     // Internal material / article number (#2870)

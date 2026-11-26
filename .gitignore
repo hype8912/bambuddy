@@ -46,7 +46,10 @@ firmware/
 
 # IDE
 .idea/
-.vscode/
+.vscode/*
+# Shared editor setup: test runner and coverage in the Testing tab
+!.vscode/settings.json
+!.vscode/extensions.json
 *.swp
 *.swo
 
